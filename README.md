@@ -1,157 +1,330 @@
-# Poly-Maker
+# Polymarket Trading Bot - Web Application
 
-A market making bot for Polymarket prediction markets. This bot automates the process of providing liquidity to markets on Polymarket by maintaining orders on both sides of the book with configurable parameters. A summary of my experience running this bot is available [here](https://x.com/defiance_cr/status/1906774862254800934)
+Modern web interface ile Polymarket prediction market trading botu.
 
-## Overview
+## 🚀 Özellikler
 
-Poly-Maker is a comprehensive solution for automated market making on Polymarket. It includes:
+### Ana Özellikler
 
-- Real-time order book monitoring via WebSockets
-- Position management with risk controls
-- Customizable trade parameters fetched from Google Sheets
-- Automated position merging functionality
-- Sophisticated spread and price management
+- **🎯 Tek Taraflı Trading:** YES, NO veya her iki tarafı da trade edebilme
+- **💹 Crypto Market Filtering:** Tüm crypto-ilişkili marketleri otomatik çekme
+- **📊 Sub-Market Support:** Multi-outcome marketlerde her seçeneği ayrı ayrı trade etme
+- **🔄 Trading Modes:**
+  - **Market Making:** Sürekli alım-satım ile spread'den kazanç
+  - **Position Building:** Hedef pozisyona ulaşana kadar sadece alım
+  - **Hybrid:** Önce pozisyon oluştur, sonra market making yap
 
-## Structure
+### Trading Enhancements
 
-The repository consists of several interconnected modules:
+- **Side-Specific PnL Tracking:** Sadece trade ettiğiniz taraf için PnL hesaplama
+- **Competitive Bot Features:**
+  - Order front-running (botların önüne geçme)
+  - Tick improvement (daha iyi fiyat teklifi)
+  - Position patience (pozisyonu uzun süre tutma toleransı)
+- **Risk Management:**
+  - Stop-loss thresholds
+  - Take-profit targets
+  - Volatility-based trading
+  - Sleep periods after losses
 
-- `poly_data`: Core data management and market making logic
-- `poly_merger`: Utility for merging positions (based on open-source Polymarket code)
-- `poly_stats`: Account statistics tracking
-- `poly_utils`: Shared utility functions
-- `data_updater`: Separate module for collecting market information
+### Web Interface
 
-## Requirements
+- **Dashboard:** Genel bakış, PnL, aktif trades
+- **Markets:** Market yönetimi, crypto market fetching, konfigürasyon
+- **Positions:** Tüm pozisyonlar, side-bazlı PnL
+- **Orders:** Aktif ve geçmiş orderlar
+- **Settings:** API credentials, default parameters, bot behavior
 
-- Python 3.9.10 or higher
-- Node.js (for poly_merger)
-- Google Sheets API credentials
-- Polymarket account and API credentials
+## 📋 Gereksinimler
 
-## Installation
+- Python 3.9.10+
+- Node.js 18+
+- Docker & Docker Compose
+- Polymarket hesabı ve API credentials
 
-This project uses UV for fast, reliable package management.
+## 🔧 Kurulum
 
-### Install UV
-
-```bash
-# macOS/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Windows
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# Or with pip
-pip install uv
-```
-
-### Install Dependencies
+### 1. Hızlı Başlangıç (Docker)
 
 ```bash
-# Install all dependencies
-uv sync
-
-# Install with development dependencies (black, pytest)
-uv sync --extra dev
-```
-
-### Quick Start
-
-```bash
-# Run the market maker (recommended)
-uv run python main.py
-
-# Update market data
-uv run python update_markets.py
-
-# Update statistics
-uv run python update_stats.py
-```
-
-### Setup Steps
-
-#### 1. Clone the repository
-
-```bash
+# Repository'yi klonla
 git clone https://github.com/yourusername/poly-maker.git
 cd poly-maker
-```
 
-#### 2. Install Python dependencies
-
-```bash
-uv sync
-```
-
-#### 3. Install Node.js dependencies for the merger
-
-```bash
-cd poly_merger
-npm install
-cd ..
-```
-
-#### 4. Set up environment variables
-
-```bash
+# .env dosyasını oluştur
 cp .env.example .env
+# .env dosyasını düzenle ve credentials ekle
+
+# Docker ile başlat
+docker-compose up -d
+
+# Web interface'e eriş
+# http://localhost
 ```
 
-#### 5. Configure your credentials in `.env`
+### 2. Manuel Kurulum
 
-Edit the `.env` file with your credentials:
-- `PK`: Your private key for Polymarket
-- `BROWSER_ADDRESS`: Your wallet address
-
-**Important:** Make sure your wallet has done at least one trade through the UI so that the permissions are proper.
-
-#### 6. Set up Google Sheets integration
-
-- Create a Google Service Account and download credentials to the main directory
-- Copy the [sample Google Sheet](https://docs.google.com/spreadsheets/d/1Kt6yGY7CZpB75cLJJAdWo7LSp9Oz7pjqfuVWwgtn7Ns/edit?gid=1884499063#gid=1884499063)
-- Add your Google service account to the sheet with edit permissions
-- Update `SPREADSHEET_URL` in your `.env` file
-
-#### 7. Update market data
-
-Run the market data updater to fetch all available markets:
+#### Backend
 
 ```bash
-uv run python update_markets.py
+cd backend
+
+# Dependencies yükle
+pip install -r requirements.txt
+
+# Database oluştur
+python database.py
+
+# FastAPI'yi başlat
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-This should run continuously in the background (preferably on a different IP than your trading bot).
-
-- Add markets you want to trade to the "Selected Markets" sheet
-- Select markets from the "Volatility Markets" sheet
-- Configure parameters in the "Hyperparameters" sheet (default parameters that worked well in November are included)
-
-#### 8. Start the market making bot
+#### Frontend
 
 ```bash
-uv run python main.py
+cd frontend
+
+# Dependencies yükle
+npm install
+
+# Development server
+npm run serve
+
+# Production build
+npm run build
 ```
 
-## Configuration
+## 📚 Kullanım
 
-The bot is configured via a Google Spreadsheet with several worksheets:
+### İlk Konfigürasyon
 
-- **Selected Markets**: Markets you want to trade
-- **All Markets**: Database of all markets on Polymarket
-- **Hyperparameters**: Configuration parameters for the trading logic
+1. **Settings sayfasına git:** API credentials'ınızı girin
+   - Private Key (PK)
+   - Wallet Address
 
+2. **Markets sayfasından crypto marketleri çek:**
+   - "Fetch Crypto Markets" butonuna tıkla
+   - Sistem tüm crypto-ilişkili marketleri otomatik olarak çekecek
 
-## Poly Merger
+3. **Market konfigürasyonu yap:**
+   - Her market için "Configure" butonuna tıkla
+   - **Side to Trade:** YES / NO / BOTH seç
+   - **Trading Mode:** Market Making / Position Building / Hybrid seç
+   - **Target Position:** (Position Building modunda) hedef pozisyon miktarı
+   - **Trading Parameters:** trade_size, max_size, stop_loss vb.
 
-The `poly_merger` module is a particularly powerful utility that handles position merging on Polymarket. It's built on open-source Polymarket code and provides a smooth way to consolidate positions, reducing gas fees and improving capital efficiency.
+4. **Trading'i başlat:**
+   - Dashboard'a dön
+   - "Start Trading" butonuna tıkla
 
-## Important Notes
+### Trading Modes Detayları
 
-- This code interacts with real markets and can potentially lose real money
-- Test thoroughly with small amounts before deploying with significant capital
-- The `data_updater` is technically a separate repository but is included here for convenience
+#### Market Making Mode
+```
+Strategi: Sürekli alım-satım ile spread'den kazanç
+Kullanım: Likit marketler, düşük volatilite
+Davranış:
+- Her iki tarafta da limit orderlar
+- Buy -> immediate sell placement
+- Max_size'a kadar pozisyon büyütme
+```
 
-## License
+#### Position Building Mode
+```
+Strategi: Belirli bir tarafa conviction ile pozisyon oluşturma
+Kullanım: Yüksek conviction, uzun vade
+Davranış:
+- Sadece buy orderlar (target'a kadar)
+- Target'a ulaşınca sell orderlar başlar
+- Pozisyonu resolution'a kadar tutma
+```
 
-MIT
+#### Hybrid Mode
+```
+Strategi: Önce pozisyon oluştur, sonra market making yap
+Kullanım: Balanced approach, orta-uzun vade
+Davranış:
+- Target'a kadar agresif buy
+- Küçük profit-taking sells (position building sırasında)
+- Target'a ulaşınca tam market making moduna geç
+```
+
+### Side Selection
+
+**YES:** Sadece token1'i (Yes tarafını) trade et
+```yaml
+Kullanım: Bitcoin yükselecek diye düşünüyorsun
+Örnek: "Will Bitcoin reach $100k?" - YES trade et
+```
+
+**NO:** Sadece token2'yi (No tarafını) trade et
+```yaml
+Kullanım: Bir olayın olmayacağına inanıyorsun
+Örnek: "Will Bitcoin crash below $50k?" - NO trade et
+```
+
+**BOTH:** Her iki tarafı da trade et (default market making)
+```yaml
+Kullanım: Neutral, sadece spread'den kazanmak
+Örnek: Volatil marketlerde spread yakalama
+```
+
+## 🏗️ Architecture
+
+```
+poly-maker/
+├── backend/                 # FastAPI backend
+│   ├── main.py             # FastAPI app
+│   ├── database.py         # SQLAlchemy models
+│   ├── schemas.py          # Pydantic schemas
+│   ├── api/                # API endpoints
+│   │   ├── markets.py
+│   │   ├── trading.py
+│   │   ├── positions.py
+│   │   ├── orders.py
+│   │   ├── settings.py
+│   │   └── stats.py
+│   └── services/           # Business logic
+│       ├── market_service.py
+│       └── trading_service.py
+│
+├── frontend/               # Vue.js frontend
+│   ├── src/
+│   │   ├── views/         # Pages
+│   │   │   ├── Dashboard.vue
+│   │   │   ├── Markets.vue
+│   │   │   ├── Positions.vue
+│   │   │   ├── Orders.vue
+│   │   │   └── Settings.vue
+│   │   ├── store/         # Vuex state
+│   │   ├── api/           # API client
+│   │   └── router/        # Vue Router
+│   └── public/
+│
+├── poly_data/             # Core trading logic
+│   ├── trading.py         # Main trading loop
+│   ├── trading_utils.py   # Trading utilities
+│   ├── db_utils.py        # Database operations
+│   └── polymarket_client.py
+│
+├── poly_merger/           # Position merging
+├── data_updater/          # Market data fetching
+├── docker-compose.yml     # Docker orchestration
+└── DEPLOYMENT.md          # Deployment guide
+```
+
+## 🔐 Güvenlik
+
+- Private key'ler environment variable'larda saklanır
+- Database şifreleme (production için önerilir)
+- HTTPS/SSL zorunlu (production)
+- API rate limiting
+- CORS configuration
+
+## 📊 Database Schema
+
+```sql
+-- Markets: Market configuration
+id, condition_id, question, token1, token2, 
+side_to_trade, trading_mode, target_position, is_active
+
+-- TradingParams: Trading parameters per market
+market_id, trade_size, max_size, stop_loss_threshold,
+take_profit_threshold, order_front_running, tick_improvement
+
+-- Positions: Current positions
+token_id, size, avg_price, side, unrealized_pnl, realized_pnl
+
+-- Orders: Order history
+order_id, token_id, side_type, price, size, status
+
+-- GlobalSettings: Bot-wide settings
+key, value, description
+```
+
+## 🚢 Deployment
+
+Detaylı deployment talimatları için [DEPLOYMENT.md](DEPLOYMENT.md) dosyasına bakın.
+
+### Production Checklist
+
+- [ ] Domain DNS ayarları
+- [ ] SSL sertifikası (Let's Encrypt)
+- [ ] Environment variables (.env)
+- [ ] Firewall configuration
+- [ ] Database backups
+- [ ] Monitoring setup
+- [ ] Log rotation
+
+## 🐛 Troubleshooting
+
+### Backend başlamıyor
+```bash
+# Logları kontrol et
+docker-compose logs backend
+
+# Database sorunları
+python backend/database.py
+```
+
+### Frontend API'ye bağlanamıyor
+```bash
+# CORS ayarlarını kontrol et
+# backend/main.py içinde allow_origins
+```
+
+### Trading bot çalışmıyor
+```bash
+# Credentials kontrolü
+# .env dosyasında PK ve BROWSER_ADDRESS
+
+# Logları incele
+docker-compose logs trading-bot
+```
+
+## 📈 Performance Tips
+
+1. **SQLite Optimization:** Production için PostgreSQL kullanın
+2. **Caching:** Redis ekleyin (market data için)
+3. **Load Balancing:** Multiple bot instances
+4. **Resource Limits:** Docker resource constraints ayarlayın
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## 📝 License
+
+MIT License - see [LICENSE](LICENSE) file
+
+## ⚠️ Disclaimer
+
+Bu bot gerçek para ile trade yapar. Kullanmadan önce:
+- Küçük miktarlarla test edin
+- Risk yönetimini anlayın
+- Kayıpları karşılayabileceğinizden emin olun
+- Market volatilitesine hazırlıklı olun
+
+## 🙋 Support
+
+- Documentation: Bu README ve DEPLOYMENT.md
+- Issues: GitHub Issues
+- Discussions: GitHub Discussions
+
+## 🎯 Roadmap
+
+- [ ] Multi-chain support
+- [ ] Advanced charting
+- [ ] Telegram notifications
+- [ ] Machine learning predictions
+- [ ] Portfolio optimization
+- [ ] Backtesting framework
+
+---
+
+Made with ❤️ for Polymarket traders
+
