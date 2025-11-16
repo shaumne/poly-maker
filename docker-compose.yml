@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # Backend FastAPI service
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: polymarket-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./polymarket_bot.db
+      - PK=${PK}
+      - BROWSER_ADDRESS=${BROWSER_ADDRESS}
+    volumes:
+      - ./poly_data:/app/poly_data
+      - ./poly_merger:/app/poly_merger
+      - ./poly_utils:/app/poly_utils
+      - ./backend:/app
+      - ./data:/app/data
+      - ./positions:/app/positions
+      - bot_db:/app
+    restart: unless-stopped
+    networks:
+      - polymarket-network
+
+  # Frontend Vue.js service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: polymarket-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - polymarket-network
+    environment:
+      - VUE_APP_API_URL=http://localhost:8000/api
+
+  # Trading bot service (main.py)
+  trading-bot:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: polymarket-trading-bot
+    command: python main.py
+    environment:
+      - DATABASE_URL=sqlite:///./polymarket_bot.db
+      - PK=${PK}
+      - BROWSER_ADDRESS=${BROWSER_ADDRESS}
+    volumes:
+      - ./poly_data:/app/poly_data
+      - ./poly_merger:/app/poly_merger
+      - ./poly_utils:/app/poly_utils
+      - ./data:/app/data
+      - ./positions:/app/positions
+      - bot_db:/app
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - polymarket-network
+
+volumes:
+  bot_db:
+    driver: local
+
+networks:
+  polymarket-network:
+    driver: bridge
+

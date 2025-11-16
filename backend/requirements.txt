@@ -1,0 +1,31 @@
+# FastAPI and Web Server
+fastapi
+uvicorn[standard]
+
+# Database
+sqlalchemy
+
+# Data Validation
+pydantic
+
+# Environment and Configuration
+python-dotenv
+python-multipart
+
+# Data Processing
+pandas
+numpy
+
+# HTTP Requests
+requests
+
+# Polymarket Trading (Note: May require Rust for some dependencies on Windows)
+# If installation fails, install Rust first: https://rustup.rs/
+py-clob-client
+web3
+eth-account
+eth-utils
+
+# Additional Trading Dependencies
+sortedcontainers
+websockets
