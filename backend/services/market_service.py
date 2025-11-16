@@ -92,25 +92,6 @@ class MarketService:
         
         if len(tokens) == 2:
             # Standard binary market (YES/NO)
-            # Try to determine side_to_trade from outcome names
-            outcome1 = tokens[0]['outcome'].lower()
-            outcome2 = tokens[1]['outcome'].lower()
-            
-            # Default to BOTH, but can be manually changed later
-            side_to_trade = 'BOTH'
-            
-            # Heuristic: If one outcome is clearly "Yes" and other is "No"
-            yes_keywords = ['yes', 'true', 'will', 'happens', 'occurs']
-            no_keywords = ['no', 'false', "won't", "doesn't", 'not']
-            
-            outcome1_is_yes = any(keyword in outcome1 for keyword in yes_keywords)
-            outcome2_is_yes = any(keyword in outcome2 for keyword in yes_keywords)
-            outcome1_is_no = any(keyword in outcome1 for keyword in no_keywords)
-            outcome2_is_no = any(keyword in outcome2 for keyword in no_keywords)
-            
-            # Note: We don't auto-set side_to_trade, user should configure manually
-            # This is just for reference - default remains BOTH
-            
             sub_markets.append({
                 'condition_id': market_data['condition_id'],
                 'question': market_data['question'],
@@ -120,8 +101,7 @@ class MarketService:
                 'token2': tokens[1]['token_id'],
                 'market_slug': market_data.get('market_slug', ''),
                 'neg_risk': market_data.get('neg_risk', 'FALSE'),
-                'parent_market': None,
-                'side_to_trade': side_to_trade  # Default BOTH, user can change
+                'parent_market': None
             })
         elif len(tokens) > 2:
             # Multi-outcome market - create separate markets for each outcome pair

@@ -4,6 +4,13 @@
       <h2>Dashboard</h2>
       <div class="controls">
         <button 
+          @click="loadDiagnostics" 
+          class="btn btn-secondary"
+          title="Check why orders might not be created"
+        >
+          🔍 Diagnostics
+        </button>
+        <button 
           v-if="!isRunning" 
           @click="startBot" 
           class="btn btn-success"
@@ -145,6 +152,51 @@
       </div>
     </div>
 
+    <!-- Trading Diagnostics -->
+    <div class="card" v-if="showDiagnostics">
+      <div class="card-header">
+        <h3 class="card-title">🔍 Trading Diagnostics</h3>
+        <button @click="showDiagnostics = false" class="btn btn-secondary btn-sm">Hide</button>
+      </div>
+      <div class="card-body" v-if="diagnostics">
+        <div class="diagnostic-section">
+          <h4>Bot Status</h4>
+          <p :class="diagnostics.bot_status.is_running ? 'text-success' : 'text-danger'">
+            {{ diagnostics.bot_status.message }}
+          </p>
+        </div>
+        
+        <div class="diagnostic-section">
+          <h4>Markets</h4>
+          <p>{{ diagnostics.markets.message || 'Loading...' }}</p>
+          <ul v-if="diagnostics.markets.total_active !== undefined">
+            <li>Active markets: {{ diagnostics.markets.total_active }}</li>
+            <li>Markets with params: {{ diagnostics.markets.markets_with_params }}</li>
+            <li>Loaded in memory: {{ diagnostics.markets.loaded_in_memory }}</li>
+          </ul>
+        </div>
+        
+        <div class="diagnostic-section">
+          <h4>WebSocket</h4>
+          <p>{{ diagnostics.websocket.message || 'Loading...' }}</p>
+          <ul v-if="diagnostics.websocket.tokens_to_subscribe !== undefined">
+            <li>Tokens to subscribe: {{ diagnostics.websocket.tokens_to_subscribe }}</li>
+            <li>Client initialized: {{ diagnostics.websocket.client_initialized ? 'Yes' : 'No' }}</li>
+          </ul>
+        </div>
+        
+        <div class="diagnostic-section" v-if="diagnostics.recommendations && diagnostics.recommendations.length > 0">
+          <h4>Recommendations</h4>
+          <ul>
+            <li v-for="(rec, idx) in diagnostics.recommendations" :key="idx">{{ rec }}</li>
+          </ul>
+        </div>
+      </div>
+      <div class="card-body" v-else>
+        <p>Loading diagnostics...</p>
+      </div>
+    </div>
+
     <!-- Active Positions -->
     <div class="card">
       <div class="card-header">
@@ -197,6 +249,8 @@ export default {
     const store = useStore()
     
     const stats = computed(() => store.state.stats.stats)
+    const diagnostics = ref(null)
+    const showDiagnostics = ref(false)
     const orders = computed(() => store.state.orders.orders)
     const positions = computed(() => store.state.positions.positions)
     const isRunning = computed(() => store.state.trading.isRunning)
@@ -246,11 +300,23 @@ export default {
       }
     }
     
+    const loadDiagnostics = async () => {
+      try {
+        const diag = await api.getTradingDiagnostics()
+        diagnostics.value = diag
+        showDiagnostics.value = true
+      } catch (error) {
+        console.error('Error loading diagnostics:', error)
+        alert('Failed to load diagnostics: ' + error.message)
+      }
+    }
+    
     onMounted(() => {
       store.dispatch('stats/fetchStats')
       store.dispatch('orders/fetchOrders', { limit: 10 })
       store.dispatch('positions/fetchPositions')
       fetchTokenBalances()
+      loadDiagnostics() // Load diagnostics on mount
       
       // Auto-refresh every 10 seconds
       setInterval(() => {
@@ -258,21 +324,27 @@ export default {
         store.dispatch('orders/fetchOrders', { limit: 10 })
         store.dispatch('positions/fetchPositions')
         fetchTokenBalances()
+        if (showDiagnostics.value) {
+          loadDiagnostics()
+        }
       }, 10000)
     })
     
-    return {
-      stats,
-      orders,
-      positions,
-      isRunning,
-      loading,
-      tokenBalances,
-      startBot,
-      stopBot,
-      getStatusBadge,
-      formatDate
-    }
+      return {
+        stats,
+        orders,
+        positions,
+        isRunning,
+        loading,
+        tokenBalances,
+        diagnostics,
+        showDiagnostics,
+        startBot,
+        stopBot,
+        getStatusBadge,
+        formatDate,
+        loadDiagnostics
+      }
   }
 }
 </script>
@@ -286,11 +358,48 @@ export default {
 }
 
 .positive {
-  color: var(--success-color);
+  color: var(--success);
 }
 
 .negative {
-  color: var(--danger-color);
+  color: var(--danger);
+}
+
+.text-success {
+  color: var(--success);
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+.diagnostic-section {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: var(--bg-primary);
+  border-radius: 8px;
+  border-left: 3px solid var(--primary);
+}
+
+.diagnostic-section h4 {
+  margin: 0 0 0.5rem 0;
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.diagnostic-section p {
+  margin: 0.5rem 0;
+  color: var(--text-secondary);
+}
+
+.diagnostic-section ul {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+  color: var(--text-secondary);
+}
+
+.diagnostic-section li {
+  margin: 0.25rem 0;
 }
 </style>
 

@@ -58,11 +58,8 @@ def send_buy_order(order):
     if should_cancel and (existing_buy_size > 0 or order['orders']['sell']['size'] > 0):
         print(f"Cancelling buy orders - price diff: {price_diff:.4f}, size diff: {size_diff:.1f}")
         
-        # DRY RUN: Don't actually cancel
-        if DRY_RUN_ENABLED:
-            print(f"[DRY RUN] Would cancel orders for token: {order['token']}")
-        else:
-            client.cancel_all_asset(order['token'])
+        # cancel_all_asset method now handles DRY_RUN internally
+        client.cancel_all_asset(order['token'])
     elif not should_cancel:
         print(f"Keeping existing buy orders - minor changes: price diff: {price_diff:.4f}, size diff: {size_diff:.1f}")
         return  # Don't place new order if existing one is fine
@@ -77,24 +74,22 @@ def send_buy_order(order):
         trade = False
 
     if trade:
-        # Only place orders with prices between 0.1 and 0.9 to avoid extreme positions
-        if order['price'] >= 0.1 and order['price'] < 0.9:
+        # Only place orders with prices between 0.01 and 0.99 to avoid extreme positions
+        # (0.01-0.99 range allows trading on both sides of prediction markets)
+        if order['price'] >= 0.01 and order['price'] <= 0.99:
             print(f'Creating new order for {order["size"]} at {order["price"]}')
             print(order['token'], 'BUY', order['price'], order['size'])
             
-            # DRY RUN: Don't actually create order
-            if DRY_RUN_ENABLED:
-                print(f"[DRY RUN] Would create BUY order: {order['size']} @ ${order['price']:.3f}")
-            else:
-                client.create_order(
-                    order['token'], 
-                    'BUY', 
-                    order['price'], 
-                    order['size'], 
-                    True if order['neg_risk'] == 'TRUE' else False
-                )
+            # create_order method now handles DRY_RUN internally
+            client.create_order(
+                order['token'], 
+                'BUY', 
+                order['price'], 
+                order['size'], 
+                True if order['neg_risk'] == 'TRUE' else False
+            )
         else:
-            print("Not creating buy order because its outside acceptable price range (0.1-0.9)")
+            print(f"Not creating buy order because price {order['price']:.3f} is outside acceptable range (0.01-0.99)")
     else:
         print(f'Not creating new order because order price of {order["price"]} is less than incentive start price of {incentive_start}. Mid price is {order["mid_price"]}')
 
@@ -128,29 +123,22 @@ def send_sell_order(order):
     
     if should_cancel and (existing_sell_size > 0 or order['orders']['buy']['size'] > 0):
         print(f"Cancelling sell orders - price diff: {price_diff:.4f}, size diff: {size_diff:.1f}")
-        
-        # DRY RUN: Don't actually cancel
-        if DRY_RUN_ENABLED:
-            print(f"[DRY RUN] Would cancel orders for token: {order['token']}")
-        else:
-            client.cancel_all_asset(order['token'])
+        # cancel_all_asset method now handles DRY_RUN internally
+        client.cancel_all_asset(order['token'])
     elif not should_cancel:
         print(f"Keeping existing sell orders - minor changes: price diff: {price_diff:.4f}, size diff: {size_diff:.1f}")
         return  # Don't place new order if existing one is fine
 
     print(f'Creating new order for {order["size"]} at {order["price"]}')
     
-    # DRY RUN: Don't actually create order
-    if DRY_RUN_ENABLED:
-        print(f"[DRY RUN] Would create SELL order: {order['size']} @ ${order['price']:.3f}")
-    else:
-        client.create_order(
-            order['token'], 
-            'SELL', 
-            order['price'], 
-            order['size'], 
-            True if order['neg_risk'] == 'TRUE' else False
-        )
+    # create_order method now handles DRY_RUN internally
+    client.create_order(
+        order['token'], 
+        'SELL', 
+        order['price'], 
+        order['size'], 
+        True if order['neg_risk'] == 'TRUE' else False
+    )
 
 # Dictionary to store locks for each market to prevent concurrent trading on the same market
 market_locks = {}
@@ -176,8 +164,21 @@ async def perform_trade(market):
     async with market_locks[market]:
         try:
             client = global_state.client
+            
+            # Check if market exists in dataframe
+            if global_state.df.empty:
+                print(f"⚠️  perform_trade called for {market} but no markets loaded in dataframe")
+                return
+            
+            market_rows = global_state.df[global_state.df['condition_id'] == market]
+            if market_rows.empty:
+                print(f"⚠️  perform_trade called for {market} but market not found in dataframe")
+                print(f"   Available markets: {global_state.df['condition_id'].tolist() if not global_state.df.empty else 'None'}")
+                return
+            
             # Get market details from the configuration
-            row = global_state.df[global_state.df['condition_id'] == market].iloc[0]      
+            row = market_rows.iloc[0]
+            print(f"🔍 Processing trade for market: {row['question']} (ID: {market})")      
             # Determine decimal precision from tick size
             round_length = len(str(row['tick_size']).split(".")[1])
 
@@ -415,14 +416,25 @@ async def perform_trade(market):
                     sheet_value = row['best_bid']
 
                     if detail['name'] == 'token2':
-                        sheet_value = 1 - row['best_ask']
+                        # For NO token, use 1 - best_ask, but only if best_ask is valid
+                        if row['best_ask'] and row['best_ask'] > 0:
+                            sheet_value = 1 - row['best_ask']
+                        else:
+                            sheet_value = None  # Invalid reference price
 
-                    sheet_value = round(sheet_value, round_length)
+                    # Only round if sheet_value is valid
+                    if sheet_value is not None:
+                        sheet_value = round(sheet_value, round_length)
+                    
                     order['size'] = buy_amount
                     order['price'] = bid_price
 
                     # Check if price is far from reference
-                    price_change = abs(order['price'] - sheet_value)
+                    # Only check if sheet_value is valid (not 0.0, None, or 1.0 for NO tokens)
+                    if sheet_value is not None and sheet_value > 0 and sheet_value < 1.0:
+                        price_change = abs(order['price'] - sheet_value)
+                    else:
+                        price_change = 0  # Skip price check if reference is invalid
 
                     send_buy = True
 
@@ -443,10 +455,18 @@ async def perform_trade(market):
                     # Only proceed if we're not in risk-off period
                     if send_buy:
                         # Don't buy if volatility is high or price is far from reference
-                        if row['3_hour'] > params['volatility_threshold'] or price_change >= 0.05:
-                            print(f'3 Hour Volatility of {row["3_hour"]} is greater than max volatility of '
-                                  f'{params["volatility_threshold"]} or price of {order["price"]} is outside '
-                                  f'0.05 of {sheet_value}. Cancelling all orders')
+                        # Skip price change check if sheet_value is invalid (0.0 or None)
+                        volatility_value = row.get('3_hour', 0) or 0
+                        volatility_check = volatility_value > params['volatility_threshold']
+                        price_check = price_change >= 0.05 if sheet_value and sheet_value > 0 else False
+                        
+                        if volatility_check or price_check:
+                            reason = []
+                            if volatility_check:
+                                reason.append(f'3 Hour Volatility of {volatility_value} is greater than max volatility of {params["volatility_threshold"]}')
+                            if price_check:
+                                reason.append(f'price of {order["price"]} is outside 0.05 of {sheet_value}')
+                            print(f'Cancelling all orders: {" and ".join(reason)}')
                             client.cancel_all_asset(order['token'])
                         else:
                             # Check for reverse position (holding opposite outcome)

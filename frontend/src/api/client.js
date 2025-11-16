@@ -67,6 +67,19 @@ export default {
     return client.get('/markets/crypto/fetch/status')
   },
   
+  bulkUpdateMarkets(marketIds, updateData) {
+    return client.post('/markets/bulk/update', { 
+      market_ids: marketIds,
+      ...updateData
+    })
+  },
+  
+  bulkDeleteMarkets(marketIds) {
+    return client.post('/markets/bulk/delete', { 
+      market_ids: marketIds
+    })
+  },
+  
   // Trading
   getTradingStatus() {
     return client.get('/trading/status')
@@ -82,6 +95,14 @@ export default {
   
   restartTrading() {
     return client.post('/trading/restart')
+  },
+  
+  getTestInfo() {
+    return client.get('/trading/test-info')
+  },
+  
+  getTradingDiagnostics() {
+    return client.get('/trading/diagnostics')
   },
   
   // Positions

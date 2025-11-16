@@ -7,7 +7,8 @@ from typing import List, Optional
 from database import get_db, Market, TradingParams
 from schemas import (
     MarketCreate, MarketUpdate, MarketResponse, MarketWithConfig,
-    TradingParamsCreate, TradingParamsUpdate, TradingParamsResponse
+    TradingParamsCreate, TradingParamsUpdate, TradingParamsResponse,
+    BulkMarketUpdate, BulkMarketDelete
 )
 
 router = APIRouter()
@@ -18,10 +19,9 @@ async def get_markets(
     limit: int = Query(default=1000, le=10000),  # Default 1000, max 10000
     category: Optional[str] = None,
     is_active: Optional[bool] = None,
-    group_by_parent: bool = Query(default=False),  # Group sub-markets under parents
     db: Session = Depends(get_db)
 ):
-    """Get all markets with optional filtering and grouping"""
+    """Get all markets with optional filtering"""
     query = db.query(Market)
     
     if category:
@@ -29,34 +29,8 @@ async def get_markets(
     if is_active is not None:
         query = query.filter(Market.is_active == is_active)
     
-    all_markets = query.offset(skip).limit(limit).all()
-    
-    # If grouping requested, organize parent-child relationships
-    if group_by_parent:
-        parent_markets_dict = {}
-        sub_markets_list = []
-        
-        for market in all_markets:
-            if market.parent_condition_id:
-                # This is a sub-market
-                sub_markets_list.append(market)
-            else:
-                # This is a parent market
-                parent_markets_dict[market.condition_id] = market
-        
-        # Attach sub-markets to their parents
-        for sub_market in sub_markets_list:
-            parent = parent_markets_dict.get(sub_market.parent_condition_id)
-            if parent:
-                if not hasattr(parent, 'sub_markets'):
-                    parent.sub_markets = []
-                parent.sub_markets.append(sub_market)
-        
-        # Return only parent markets (with sub-markets attached)
-        result = [m for m in all_markets if not m.parent_condition_id]
-        return result
-    
-    return all_markets
+    markets = query.offset(skip).limit(limit).all()
+    return markets
 
 @router.get("/{market_id}", response_model=MarketWithConfig)
 async def get_market(market_id: int, db: Session = Depends(get_db)):
@@ -111,6 +85,58 @@ async def delete_market(market_id: int, db: Session = Depends(get_db)):
     db.delete(db_market)
     db.commit()
     return {"message": "Market deleted successfully"}
+
+@router.post("/bulk/update")
+async def bulk_update_markets(
+    bulk_update: BulkMarketUpdate,
+    db: Session = Depends(get_db)
+):
+    """Bulk update multiple markets"""
+    if not bulk_update.market_ids:
+        raise HTTPException(status_code=400, detail="No market IDs provided")
+    
+    markets = db.query(Market).filter(Market.id.in_(bulk_update.market_ids)).all()
+    if not markets:
+        raise HTTPException(status_code=404, detail="No markets found")
+    
+    # Get update data excluding market_ids
+    update_data = bulk_update.model_dump(exclude={'market_ids'}, exclude_unset=True)
+    updated_count = 0
+    
+    for market in markets:
+        for key, value in update_data.items():
+            setattr(market, key, value)
+        updated_count += 1
+    
+    db.commit()
+    return {
+        "message": f"Successfully updated {updated_count} market(s)",
+        "updated_count": updated_count
+    }
+
+@router.post("/bulk/delete")
+async def bulk_delete_markets(
+    bulk_delete: BulkMarketDelete,
+    db: Session = Depends(get_db)
+):
+    """Bulk delete multiple markets"""
+    if not bulk_delete.market_ids:
+        raise HTTPException(status_code=400, detail="No market IDs provided")
+    
+    markets = db.query(Market).filter(Market.id.in_(bulk_delete.market_ids)).all()
+    if not markets:
+        raise HTTPException(status_code=404, detail="No markets found")
+    
+    deleted_count = 0
+    for market in markets:
+        db.delete(market)
+        deleted_count += 1
+    
+    db.commit()
+    return {
+        "message": f"Successfully deleted {deleted_count} market(s)",
+        "deleted_count": deleted_count
+    }
 
 @router.get("/{market_id}/config", response_model=TradingParamsResponse)
 async def get_market_config(market_id: int, db: Session = Depends(get_db)):
@@ -265,8 +291,7 @@ async def fetch_and_save_crypto_markets():
                     valid_fields = {
                         'condition_id', 'question', 'answer1', 'answer2', 
                         'token1', 'token2', 'market_slug', 'neg_risk',
-                        'best_bid', 'best_ask', 'spread', 'side_to_trade',
-                        'parent_market'  # Will be mapped to parent_condition_id
+                        'best_bid', 'best_ask', 'spread'
                     }
                     
                     # Only keep fields that exist in Market model
@@ -274,14 +299,6 @@ async def fetch_and_save_crypto_markets():
                         k: v for k, v in market_data.items() 
                         if k in valid_fields
                     }
-                    
-                    # Map parent_market to parent_condition_id
-                    if 'parent_market' in filtered_data:
-                        filtered_data['parent_condition_id'] = filtered_data.pop('parent_market')
-                    
-                    # Ensure side_to_trade is set (default to BOTH if not provided)
-                    if 'side_to_trade' not in filtered_data or not filtered_data['side_to_trade']:
-                        filtered_data['side_to_trade'] = 'BOTH'
                     
                     # Check if market already exists
                     existing = db.query(Market).filter(

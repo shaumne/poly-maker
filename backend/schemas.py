@@ -30,7 +30,6 @@ class MarketBase(BaseModel):
     token1: str
     token2: str
     market_slug: Optional[str] = None
-    parent_condition_id: Optional[str] = None
     side_to_trade: SideToTrade = SideToTrade.BOTH
     trading_mode: TradingMode = TradingMode.MARKET_MAKING
     target_position: float = 0.0
@@ -52,11 +51,22 @@ class MarketUpdate(BaseModel):
     is_active: Optional[bool] = None
     category: Optional[MarketCategory] = None
 
+class BulkMarketUpdate(BaseModel):
+    market_ids: List[int]
+    question: Optional[str] = None
+    side_to_trade: Optional[SideToTrade] = None
+    trading_mode: Optional[TradingMode] = None
+    target_position: Optional[float] = None
+    is_active: Optional[bool] = None
+    category: Optional[MarketCategory] = None
+
+class BulkMarketDelete(BaseModel):
+    market_ids: List[int]
+
 class MarketResponse(MarketBase):
     id: int
     created_at: datetime
     updated_at: datetime
-    sub_markets: Optional[List['MarketResponse']] = None  # For nested sub-markets
     
     class Config:
         from_attributes = True

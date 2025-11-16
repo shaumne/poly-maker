@@ -46,7 +46,27 @@ class TradingService:
             update_positions()
             update_orders()
             
-            print(f"Loaded {len(global_state.df)} active markets from database")
+            print(f"✅ Loaded {len(global_state.df)} active markets from database")
+            print(f"✅ Subscribing to {len(global_state.all_tokens)} tokens")
+            
+            if len(global_state.df) == 0:
+                print("⚠️  WARNING: No active markets found! Please add markets and ensure they are active.")
+                print("   - Go to Markets page")
+                print("   - Fetch crypto markets or add manually")
+                print("   - Configure markets and set is_active = true")
+            
+            if len(global_state.all_tokens) == 0:
+                print("⚠️  WARNING: No tokens to subscribe to!")
+                print("   Possible reasons:")
+                print("   - Markets may not have token1/token2 set")
+                print("   - Token values may be None or empty")
+                print("   - Check Markets page and ensure token1/token2 are populated")
+                if len(global_state.df) > 0:
+                    print(f"   - Found {len(global_state.df)} markets but no valid tokens")
+                    for idx, row in global_state.df.iterrows():
+                        print(f"     Market: {row['question']}")
+                        print(f"       token1: {row.get('token1', 'MISSING')}")
+                        print(f"       token2: {row.get('token2', 'MISSING')}")
             
             # Start trading loop
             while self.is_running:
@@ -168,8 +188,16 @@ class TradingService:
         global_state.REVERSE_TOKENS = {}
         
         for _, row in global_state.df.iterrows():
-            token1 = str(row['token1'])
-            token2 = str(row['token2'])
+            token1 = str(row['token1']) if row['token1'] else None
+            token2 = str(row['token2']) if row['token2'] else None
+            
+            # Skip if tokens are missing or invalid
+            if not token1 or token1 == 'None' or token1 == 'nan' or not token1.strip():
+                print(f"⚠️  Warning: Market '{row['question']}' has invalid token1: {token1}")
+                continue
+            if not token2 or token2 == 'None' or token2 == 'nan' or not token2.strip():
+                print(f"⚠️  Warning: Market '{row['question']}' has invalid token2: {token2}")
+                continue
             
             if token1 not in global_state.all_tokens:
                 global_state.all_tokens.append(token1)

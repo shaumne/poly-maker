@@ -1,7 +1,5 @@
 import poly_data.global_state as global_state
-from poly_data.utils import get_sheet_df
 import time
-import poly_data.global_state as global_state
 
 #sth here seems to be removing the position
 def update_positions(avgOnly=False):
@@ -146,25 +144,10 @@ def set_order(token, side, size, price):
     
 
 def update_markets():
-    received_df, received_params = get_sheet_df()
-
-    if len(received_df) > 0:
-        global_state.df, global_state.params = received_df.copy(), received_params
-    
-
-    for _, row in global_state.df.iterrows():
-        for col in ['token1', 'token2']:
-            row[col] = str(row[col])
-
-        if row['token1'] not in global_state.all_tokens:
-            global_state.all_tokens.append(row['token1'])
-
-        if row['token1'] not in global_state.REVERSE_TOKENS:
-            global_state.REVERSE_TOKENS[row['token1']] = row['token2']
-
-        if row['token2'] not in global_state.REVERSE_TOKENS:
-            global_state.REVERSE_TOKENS[row['token2']] = row['token1']
-
-        for col2 in [f"{row['token1']}_buy", f"{row['token1']}_sell", f"{row['token2']}_buy", f"{row['token2']}_sell"]:
-            if col2 not in global_state.performing:
-                global_state.performing[col2] = set()
+    """
+    Update markets from database (deprecated - use trading_service._load_markets_from_db instead)
+    This function is kept for backward compatibility but should not be used.
+    """
+    # This function is deprecated - markets are now loaded via trading_service._load_markets_from_db
+    # Keeping it for backward compatibility but it does nothing
+    pass

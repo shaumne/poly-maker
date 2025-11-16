@@ -144,6 +144,17 @@ class PolymarketClient:
         Returns:
             dict: Response from the API containing order details, or empty dict on error
         """
+        # Check DRY_RUN mode
+        try:
+            from backend.config import Config
+            is_dry_run = Config.is_dry_run()
+        except ImportError:
+            is_dry_run = os.getenv('DRY_RUN', 'true').lower() == 'true'
+        
+        if is_dry_run:
+            print(f"[DRY RUN] Would create {action} order: {size} @ ${price:.3f} for token {marketId[:20]}...")
+            return {"dry_run": True, "action": action, "price": price, "size": size, "token_id": marketId}
+        
         # Create order parameters
         order_args = OrderArgs(
             token_id=str(marketId),
@@ -165,7 +176,7 @@ class PolymarketClient:
             resp = self.client.post_order(signed_order)
             return resp
         except Exception as ex:
-            print(ex)
+            print(f"❌ Error creating order: {ex}")
             return {}
 
     def get_order_book(self, market):
@@ -317,7 +328,21 @@ class PolymarketClient:
         Args:
             asset_id (str): Asset token ID
         """
-        self.client.cancel_market_orders(asset_id=str(asset_id))
+        # Check DRY_RUN mode
+        try:
+            from backend.config import Config
+            is_dry_run = Config.is_dry_run()
+        except ImportError:
+            is_dry_run = os.getenv('DRY_RUN', 'true').lower() == 'true'
+        
+        if is_dry_run:
+            print(f"[DRY RUN] Would cancel all orders for asset: {asset_id[:20]}...")
+            return
+        
+        try:
+            self.client.cancel_market_orders(asset_id=str(asset_id))
+        except Exception as ex:
+            print(f"❌ Error cancelling orders: {ex}")
 
 
     
@@ -328,7 +353,21 @@ class PolymarketClient:
         Args:
             marketId (str): Market ID
         """
-        self.client.cancel_market_orders(market=marketId)
+        # Check DRY_RUN mode
+        try:
+            from backend.config import Config
+            is_dry_run = Config.is_dry_run()
+        except ImportError:
+            is_dry_run = os.getenv('DRY_RUN', 'true').lower() == 'true'
+        
+        if is_dry_run:
+            print(f"[DRY RUN] Would cancel all orders for market: {marketId[:20]}...")
+            return
+        
+        try:
+            self.client.cancel_market_orders(market=marketId)
+        except Exception as ex:
+            print(f"❌ Error cancelling market orders: {ex}")
 
     
     def merge_positions(self, amount_to_merge, condition_id, is_neg_risk_market):

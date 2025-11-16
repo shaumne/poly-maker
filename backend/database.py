@@ -21,7 +21,6 @@ class Market(Base):
     token1 = Column(String, nullable=False)
     token2 = Column(String, nullable=False)
     market_slug = Column(String)
-    parent_condition_id = Column(String, nullable=True, index=True)  # For sub-markets
     
     # Trading configuration
     side_to_trade = Column(String, default='BOTH')  # YES, NO, BOTH

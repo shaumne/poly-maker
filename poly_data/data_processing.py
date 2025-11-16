@@ -18,9 +18,15 @@ def process_book_data(asset, json_data):
     global_state.all_data[asset]['bids'].update({float(entry['price']): float(entry['size']) for entry in json_data['bids']})
     global_state.all_data[asset]['asks'].update({float(entry['price']): float(entry['size']) for entry in json_data['asks']})
 
-def process_price_change(asset, side, price_level, new_size):
-    if asset_id != global_state.all_data[asset]['asset_id']:
-        return  # skip updates for the No token to prevent duplicated updates
+def process_price_change(asset, side, price_level, new_size, asset_id=None):
+    # Skip if asset not in all_data
+    if asset not in global_state.all_data:
+        return
+    
+    # Skip updates for the No token to prevent duplicated updates (if asset_id provided)
+    if asset_id and asset_id != global_state.all_data[asset].get('asset_id'):
+        return
+    
     if side == 'bids':
         book = global_state.all_data[asset]['bids']
     else:
@@ -33,25 +39,49 @@ def process_price_change(asset, side, price_level, new_size):
         book[price_level] = new_size
 
 def process_data(json_datas, trade=True):
+    # Handle different input types
+    if isinstance(json_datas, str):
+        # If it's a string, try to parse it
+        try:
+            import json
+            json_datas = json.loads(json_datas)
+        except:
+            print(f"⚠️  Failed to parse string data: {json_datas[:100]}")
+            return
+    
+    # Ensure json_datas is a list
+    if isinstance(json_datas, dict):
+        json_datas = [json_datas]
+    elif not isinstance(json_datas, list):
+        print(f"⚠️  Unexpected data type in process_data: {type(json_datas)}")
+        return
 
     for json_data in json_datas:
-        event_type = json_data['event_type']
-        asset = json_data['market']
+        # Skip if json_data is not a dict
+        if not isinstance(json_data, dict):
+            print(f"⚠️  Skipping non-dict data in process_data: {type(json_data)}")
+            continue
+            
+        event_type = json_data.get('event_type', 'unknown')
+        asset = json_data.get('market', 'unknown')
 
         if event_type == 'book':
             process_book_data(asset, json_data)
+            print(f"📊 Received book update for market: {asset}")
 
             if trade:
+                print(f"🔄 Triggering perform_trade for market: {asset}")
                 asyncio.create_task(perform_trade(asset))
                 
         elif event_type == 'price_change':
-            for data in json_data['price_changes']:
+            for data in json_data.get('price_changes', []):
                 side = 'bids' if data['side'] == 'BUY' else 'asks'
                 price_level = float(data['price'])
                 new_size = float(data['size'])
                 process_price_change(asset, side, price_level, new_size)
 
                 if trade:
+                    print(f"💰 Price change detected for {asset}, triggering perform_trade")
                     asyncio.create_task(perform_trade(asset))
         
 
