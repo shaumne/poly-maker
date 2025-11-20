@@ -1,6 +1,6 @@
 from py_clob_client.constants import POLYGON
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OrderArgs, BalanceAllowanceParams, AssetType
+from py_clob_client.clob_types import OrderArgs, BalanceAllowanceParams, AssetType, OrderType
 from py_clob_client.order_builder.constants import BUY
 
 from web3 import Web3
@@ -116,10 +116,10 @@ def market_action( marketId, action, price, size ):
     signed_order = get_clob_client().create_order(order_args)
     
     try:
-        resp = get_clob_client().post_order(signed_order)
+        resp = get_clob_client().post_order(signed_order, OrderType.GTC)
         print(resp)
     except Exception as ex:
-        print(ex)
+        print(f"❌ Error in market_action: {ex}")
         pass
     
     

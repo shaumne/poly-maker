@@ -81,12 +81,20 @@ def send_buy_order(order):
             print(order['token'], 'BUY', order['price'], order['size'])
             
             # create_order method now handles DRY_RUN internally
+            # Convert neg_risk from string to boolean
+            # Handle both 'TRUE'/'FALSE' strings and boolean values
+            neg_risk_value = False
+            if isinstance(order.get('neg_risk'), str):
+                neg_risk_value = order['neg_risk'].upper() == 'TRUE'
+            elif isinstance(order.get('neg_risk'), bool):
+                neg_risk_value = order['neg_risk']
+            
             client.create_order(
                 order['token'], 
                 'BUY', 
                 order['price'], 
                 order['size'], 
-                True if order['neg_risk'] == 'TRUE' else False
+                neg_risk=neg_risk_value
             )
         else:
             print(f"Not creating buy order because price {order['price']:.3f} is outside acceptable range (0.01-0.99)")
@@ -132,12 +140,20 @@ def send_sell_order(order):
     print(f'Creating new order for {order["size"]} at {order["price"]}')
     
     # create_order method now handles DRY_RUN internally
+    # Convert neg_risk from string to boolean
+    # Handle both 'TRUE'/'FALSE' strings and boolean values
+    neg_risk_value = False
+    if isinstance(order.get('neg_risk'), str):
+        neg_risk_value = order['neg_risk'].upper() == 'TRUE'
+    elif isinstance(order.get('neg_risk'), bool):
+        neg_risk_value = order['neg_risk']
+    
     client.create_order(
         order['token'], 
         'SELL', 
         order['price'], 
         order['size'], 
-        True if order['neg_risk'] == 'TRUE' else False
+        neg_risk=neg_risk_value
     )
 
 # Dictionary to store locks for each market to prevent concurrent trading on the same market
