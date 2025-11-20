@@ -126,7 +126,7 @@ def update_position_in_db(token_id: str, size: float, avg_price: float,
 
 def update_order_in_db(order_id: str, token_id: str, side_type: str, 
                        price: float, size: float, status: str = 'PENDING',
-                       market_id: Optional[int] = None):
+                       market_id: Optional[int] = None, filled_size: float = 0.0):
     """Update order in database"""
     db = get_db_session()
     try:
@@ -134,7 +134,8 @@ def update_order_in_db(order_id: str, token_id: str, side_type: str,
         
         if order:
             order.status = status
-            order.filled_size = size
+            order.filled_size = filled_size
+            order.size = size  # Update size if changed
         else:
             # Create new order
             order = Order(
@@ -143,6 +144,7 @@ def update_order_in_db(order_id: str, token_id: str, side_type: str,
                 side_type=side_type,
                 price=price,
                 size=size,
+                filled_size=filled_size,
                 status=status,
                 market_id=market_id or 0
             )

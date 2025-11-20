@@ -86,16 +86,18 @@
 </template>
 
 <script>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useStore } from 'vuex'
 
 export default {
   name: 'Positions',
   setup() {
     const store = useStore()
+    let refreshInterval = null
     
     const positions = computed(() => store.state.positions.positions)
     const loading = computed(() => store.state.positions.loading)
+    const isCacheValid = computed(() => store.getters['positions/isCacheValid'])
     
     const totalPnl = computed(() => {
       return positions.value.reduce((sum, pos) => {
@@ -112,7 +114,8 @@ export default {
     })
     
     const refreshPositions = () => {
-      store.dispatch('positions/fetchPositions')
+      // Manuel refresh (buton tıklandığında) her zaman force refresh yapar
+      store.dispatch('positions/fetchPositions', { force: true })
     }
     
     const formatDate = (dateStr) => {
@@ -121,11 +124,34 @@ export default {
       return date.toLocaleString()
     }
     
+    // Cache-aware data fetching: cache geçersizse veya ilk yükleme ise API çağrısı yap
+    const loadPositionsIfNeeded = () => {
+      if (!isCacheValid.value) {
+        store.dispatch('positions/fetchPositions', { force: false })
+      } else {
+        console.log('[Positions] Cache geçerli, veri cache\'den gösteriliyor')
+      }
+    }
+    
     onMounted(() => {
-      refreshPositions()
+      // İlk yükleme: cache kontrolü yap, geçersizse çek
+      loadPositionsIfNeeded()
       
-      // Auto-refresh every 15 seconds
-      setInterval(refreshPositions, 15000)
+      // Auto-refresh: cache süresi 5 saniye olduğu için 6 saniyede bir kontrol et
+      // Bu şekilde cache süresi geçtikten hemen sonra yeni veri çekilir
+      refreshInterval = setInterval(() => {
+        if (!isCacheValid.value) {
+          store.dispatch('positions/fetchPositions', { force: false })
+        }
+      }, 6000) // 6 saniye (cache 5 saniye, 1 saniye tolerans)
+    })
+    
+    onUnmounted(() => {
+      // Cleanup: interval'ı temizle
+      if (refreshInterval) {
+        clearInterval(refreshInterval)
+        refreshInterval = null
+      }
     })
     
     return {

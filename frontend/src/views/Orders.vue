@@ -64,16 +64,18 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useStore } from 'vuex'
 
 export default {
   name: 'Orders',
   setup() {
     const store = useStore()
+    let refreshInterval = null
     
     const orders = computed(() => store.state.orders.orders)
     const loading = computed(() => store.state.orders.loading)
+    const isCacheValid = computed(() => store.getters['orders/isCacheValid'])
     
     const showActiveOnly = ref(false)
     
@@ -85,10 +87,11 @@ export default {
     })
     
     const refreshOrders = () => {
+      // Manuel refresh (buton tıklandığında) her zaman force refresh yapar
       if (showActiveOnly.value) {
-        store.dispatch('orders/fetchActiveOrders')
+        store.dispatch('orders/fetchActiveOrders', true)
       } else {
-        store.dispatch('orders/fetchOrders')
+        store.dispatch('orders/fetchOrders', { force: true })
       }
     }
     
@@ -107,11 +110,42 @@ export default {
       return date.toLocaleString()
     }
     
+    // Cache-aware data fetching: cache geçersizse veya ilk yükleme ise API çağrısı yap
+    const loadOrdersIfNeeded = () => {
+      if (!isCacheValid.value) {
+        if (showActiveOnly.value) {
+          store.dispatch('orders/fetchActiveOrders', false)
+        } else {
+          store.dispatch('orders/fetchOrders', { force: false })
+        }
+      } else {
+        console.log('[Orders] Cache geçerli, veri cache\'den gösteriliyor')
+      }
+    }
+    
     onMounted(() => {
-      refreshOrders()
+      // İlk yükleme: cache kontrolü yap, geçersizse çek
+      loadOrdersIfNeeded()
       
-      // Auto-refresh every 10 seconds
-      setInterval(refreshOrders, 10000)
+      // Auto-refresh: cache süresi 5 saniye olduğu için 6 saniyede bir kontrol et
+      // Bu şekilde cache süresi geçtikten hemen sonra yeni veri çekilir
+      refreshInterval = setInterval(() => {
+        if (!isCacheValid.value) {
+          if (showActiveOnly.value) {
+            store.dispatch('orders/fetchActiveOrders', false)
+          } else {
+            store.dispatch('orders/fetchOrders', { force: false })
+          }
+        }
+      }, 6000) // 6 saniye (cache 5 saniye, 1 saniye tolerans)
+    })
+    
+    onUnmounted(() => {
+      // Cleanup: interval'ı temizle
+      if (refreshInterval) {
+        clearInterval(refreshInterval)
+        refreshInterval = null
+      }
     })
     
     return {

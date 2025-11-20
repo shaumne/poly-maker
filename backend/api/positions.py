@@ -16,7 +16,7 @@ async def get_positions(
     db: Session = Depends(get_db)
 ):
     """Get all positions with optional filtering"""
-    query = db.query(Position)
+    query = db.query(Position).filter(Position.size > 0)  # Only show positions with size > 0
     
     if market_id:
         query = query.filter(Position.market_id == market_id)

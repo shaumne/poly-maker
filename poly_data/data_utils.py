@@ -4,6 +4,16 @@ import time
 #sth here seems to be removing the position
 def update_positions(avgOnly=False):
     pos_df = global_state.client.get_all_positions()
+    
+    # Import db_utils here to avoid circular imports
+    try:
+        from poly_data.db_utils import update_position_in_db
+        from poly_data.db_utils import get_db_session
+        from backend.database import Market
+    except ImportError:
+        print("⚠️  Database utilities not available, skipping DB sync")
+        update_position_in_db = None
+        get_db_session = None
 
     for idx, row in pos_df.iterrows():
         asset = str(row['asset'])
@@ -40,6 +50,53 @@ def update_positions(avgOnly=False):
                     print(f"ALERT: Skipping update for {asset} because there are trades pending for {col} looking like {global_state.performing[col]}")
     
         global_state.positions[asset] = position
+        
+        # Sync to database
+        if update_position_in_db and position['size'] != 0:
+            try:
+                # Find market_id from token_id using global_state.df
+                market_id = None
+                side = None
+                
+                if global_state.df is not None and not global_state.df.empty:
+                    # Check if token matches token1 or token2
+                    matching_markets = global_state.df[
+                        (global_state.df['token1'].astype(str) == asset) | 
+                        (global_state.df['token2'].astype(str) == asset)
+                    ]
+                    
+                    if not matching_markets.empty:
+                        # Get first matching market (should be only one per token)
+                        market_row = matching_markets.iloc[0]
+                        condition_id = market_row['condition_id']
+                        
+                        # Find market_id from database
+                        if get_db_session:
+                            db = get_db_session()
+                            try:
+                                market = db.query(Market).filter(Market.condition_id == condition_id).first()
+                                if market:
+                                    market_id = market.id
+                                    # Determine side based on which token matches
+                                    if str(market_row['token1']) == asset:
+                                        side = 'YES'
+                                    elif str(market_row['token2']) == asset:
+                                        side = 'NO'
+                            finally:
+                                db.close()
+                
+                # Update position in database
+                update_position_in_db(
+                    token_id=asset,
+                    size=position['size'],
+                    avg_price=position['avgPrice'],
+                    side=side,
+                    market_id=market_id
+                )
+            except Exception as e:
+                print(f"⚠️  Error syncing position to database: {e}")
+                import traceback
+                traceback.print_exc()
 
 def get_position(token):
     token = str(token)
@@ -90,14 +147,25 @@ def update_orders():
     all_orders = global_state.client.get_all_orders()
 
     orders = {}
+    
+    # Import db_utils here to avoid circular imports
+    try:
+        from poly_data.db_utils import update_order_in_db
+        from poly_data.db_utils import get_db_session
+        from backend.database import Market
+    except ImportError:
+        print("⚠️  Database utilities not available, skipping DB sync")
+        update_order_in_db = None
+        get_db_session = None
 
     if len(all_orders) > 0:
             for token in all_orders['asset_id'].unique():
+                token_str = str(token)
                 
-                if token not in orders:
-                    orders[str(token)] = {'buy': {'price': 0, 'size': 0}, 'sell': {'price': 0, 'size': 0}}
+                if token_str not in orders:
+                    orders[token_str] = {'buy': {'price': 0, 'size': 0}, 'sell': {'price': 0, 'size': 0}}
 
-                curr_orders = all_orders[all_orders['asset_id'] == str(token)]
+                curr_orders = all_orders[all_orders['asset_id'] == token_str]
                 
                 if len(curr_orders) > 0:
                     sel_orders = {}
@@ -110,10 +178,74 @@ def update_orders():
                         if len(curr) > 1:
                             print("Multiple orders found, cancelling")
                             global_state.client.cancel_all_asset(token)
-                            orders[str(token)] = {'buy': {'price': 0, 'size': 0}, 'sell': {'price': 0, 'size': 0}}
+                            orders[token_str] = {'buy': {'price': 0, 'size': 0}, 'sell': {'price': 0, 'size': 0}}
                         elif len(curr) == 1:
-                            orders[str(token)][type]['price'] = float(curr.iloc[0]['price'])
-                            orders[str(token)][type]['size'] = float(curr.iloc[0]['original_size'] - curr.iloc[0]['size_matched'])
+                            order_row = curr.iloc[0]
+                            orders[token_str][type]['price'] = float(order_row['price'])
+                            orders[token_str][type]['size'] = float(order_row['original_size'] - order_row['size_matched'])
+                            
+                            # Sync order to database
+                            if update_order_in_db:
+                                try:
+                                    # Get order details
+                                    order_id = str(order_row.get('id', ''))
+                                    side_type = type.upper()  # 'BUY' or 'SELL'
+                                    price = float(order_row['price'])
+                                    size = float(order_row['original_size'])
+                                    filled_size = float(order_row['size_matched'])
+                                    
+                                    # Determine order status
+                                    if filled_size >= size:
+                                        status = 'FILLED'
+                                    else:
+                                        status = 'PENDING'
+                                    
+                                    # Find market_id from token_id using global_state.df
+                                    market_id = None
+                                    side = None
+                                    
+                                    if global_state.df is not None and not global_state.df.empty:
+                                        # Check if token matches token1 or token2
+                                        matching_markets = global_state.df[
+                                            (global_state.df['token1'].astype(str) == token_str) | 
+                                            (global_state.df['token2'].astype(str) == token_str)
+                                        ]
+                                        
+                                        if not matching_markets.empty:
+                                            # Get first matching market
+                                            market_row = matching_markets.iloc[0]
+                                            condition_id = market_row['condition_id']
+                                            
+                                            # Find market_id from database
+                                            if get_db_session:
+                                                db = get_db_session()
+                                                try:
+                                                    market = db.query(Market).filter(Market.condition_id == condition_id).first()
+                                                    if market:
+                                                        market_id = market.id
+                                                        # Determine side based on which token matches
+                                                        if str(market_row['token1']) == token_str:
+                                                            side = 'YES'
+                                                        elif str(market_row['token2']) == token_str:
+                                                            side = 'NO'
+                                                finally:
+                                                    db.close()
+                                    
+                                    # Update order in database
+                                    update_order_in_db(
+                                        order_id=order_id,
+                                        token_id=token_str,
+                                        side_type=side_type,
+                                        price=price,
+                                        size=size,
+                                        filled_size=filled_size,
+                                        status=status,
+                                        market_id=market_id
+                                    )
+                                except Exception as e:
+                                    print(f"⚠️  Error syncing order to database: {e}")
+                                    import traceback
+                                    traceback.print_exc()
 
     global_state.orders = orders
 
