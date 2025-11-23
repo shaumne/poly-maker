@@ -239,7 +239,7 @@
 </template>
 
 <script>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useStore } from 'vuex'
 import api from '../api/client'
 
@@ -247,7 +247,6 @@ export default {
   name: 'Dashboard',
   setup() {
     const store = useStore()
-    let refreshInterval = null
     
     const stats = computed(() => store.state.stats.stats)
     const diagnostics = ref(null)
@@ -257,10 +256,6 @@ export default {
     const isRunning = computed(() => store.state.trading.isRunning)
     const loading = computed(() => store.state.trading.loading)
     const tokenBalances = ref(null)
-    
-    // Cache validators
-    const isPositionsCacheValid = computed(() => store.getters['positions/isCacheValid'])
-    const isOrdersCacheValid = computed(() => store.getters['orders/isCacheValid'])
     
     const startBot = async () => {
       try {
@@ -316,59 +311,23 @@ export default {
       }
     }
     
-    // Cache-aware data loading: positions ve orders için cache kontrolü yap
-    const loadPositionsIfNeeded = () => {
-      if (!isPositionsCacheValid.value) {
-        store.dispatch('positions/fetchPositions', { force: false })
-      } else {
-        console.log('[Dashboard] Positions cache geçerli, cache\'den gösteriliyor')
-      }
-    }
-    
-    const loadOrdersIfNeeded = () => {
-      if (!isOrdersCacheValid.value) {
-        store.dispatch('orders/fetchOrders', { limit: 10, force: false })
-      } else {
-        console.log('[Dashboard] Orders cache geçerli, cache\'den gösteriliyor')
-      }
-    }
-    
     onMounted(() => {
-      // Stats ve diğer veriler için normal fetch
       store.dispatch('stats/fetchStats')
+      store.dispatch('orders/fetchOrders', { limit: 10 })
+      store.dispatch('positions/fetchPositions')
       fetchTokenBalances()
-      loadDiagnostics()
+      loadDiagnostics() // Load diagnostics on mount
       
-      // Positions ve orders için cache-aware loading
-      loadPositionsIfNeeded()
-      loadOrdersIfNeeded()
-      
-      // Auto-refresh: cache-aware yap
-      // Positions ve orders için sadece cache geçersizse refresh et
-      refreshInterval = setInterval(() => {
+      // Auto-refresh every 10 seconds
+      setInterval(() => {
         store.dispatch('stats/fetchStats')
+        store.dispatch('orders/fetchOrders', { limit: 10 })
+        store.dispatch('positions/fetchPositions')
         fetchTokenBalances()
-        
-        // Cache-aware refresh: sadece cache geçersizse yeni veri çek
-        if (!isPositionsCacheValid.value) {
-          store.dispatch('positions/fetchPositions', { force: false })
-        }
-        if (!isOrdersCacheValid.value) {
-          store.dispatch('orders/fetchOrders', { limit: 10, force: false })
-        }
-        
         if (showDiagnostics.value) {
           loadDiagnostics()
         }
-      }, 6000) // 6 saniye (cache 5 saniye, 1 saniye tolerans)
-    })
-    
-    onUnmounted(() => {
-      // Cleanup: interval'ı temizle
-      if (refreshInterval) {
-        clearInterval(refreshInterval)
-        refreshInterval = null
-      }
+      }, 10000)
     })
     
       return {
