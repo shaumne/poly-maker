@@ -119,6 +119,133 @@
       </div>
     </div>
 
+    <!-- Add Market Modal -->
+    <div v-if="showAddModal" class="modal-overlay" @click="showAddModal = false">
+      <div class="modal-content" @click.stop>
+        <div class="modal-header">
+          <h3>Add New Market</h3>
+          <button @click="showAddModal = false" class="modal-close">×</button>
+        </div>
+        <div class="modal-body">
+          <form @submit.prevent="addMarket">
+            <div class="form-group">
+              <label class="form-label">
+                Condition ID <span class="required">*</span>
+              </label>
+              <input 
+                v-model="addForm.condition_id" 
+                type="text" 
+                class="form-input" 
+                placeholder="0x..."
+                required
+              />
+              <small class="form-help">The Polymarket condition ID for this market</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                Question <span class="required">*</span>
+              </label>
+              <input 
+                v-model="addForm.question" 
+                type="text" 
+                class="form-input" 
+                placeholder="What price will Bitcoin hit November 24-30?"
+                required
+              />
+              <small class="form-help">The market question/title</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                Token 1 ID <span class="required">*</span>
+              </label>
+              <input 
+                v-model="addForm.token1" 
+                type="text" 
+                class="form-input" 
+                placeholder="Token ID for YES/First outcome"
+                required
+              />
+              <small class="form-help">Token ID for the first outcome (usually YES)</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                Token 2 ID <span class="required">*</span>
+              </label>
+              <input 
+                v-model="addForm.token2" 
+                type="text" 
+                class="form-input" 
+                placeholder="Token ID for NO/Second outcome"
+                required
+              />
+              <small class="form-help">Token ID for the second outcome (usually NO)</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Answer 1 (Optional)</label>
+              <input 
+                v-model="addForm.answer1" 
+                type="text" 
+                class="form-input" 
+                placeholder="YES"
+              />
+              <small class="form-help">Label for the first outcome</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Answer 2 (Optional)</label>
+              <input 
+                v-model="addForm.answer2" 
+                type="text" 
+                class="form-input" 
+                placeholder="NO"
+              />
+              <small class="form-help">Label for the second outcome</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Market Slug (Optional)</label>
+              <input 
+                v-model="addForm.market_slug" 
+                type="text" 
+                class="form-input" 
+                placeholder="what-price-will-bitcoin-hit-november-24-30"
+              />
+              <small class="form-help">The market slug from Polymarket URL</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Category</label>
+              <select v-model="addForm.category" class="form-select">
+                <option value="crypto">Crypto</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div class="form-group checkbox-group">
+              <label class="checkbox-label">
+                <input v-model="addForm.is_active" type="checkbox" />
+                <span>Active (start trading immediately)</span>
+              </label>
+            </div>
+
+            <div v-if="addError" class="alert alert-danger">
+              {{ addError }}
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button @click="showAddModal = false" class="btn btn-secondary">Cancel</button>
+          <button @click="addMarket" class="btn btn-primary" :disabled="adding">
+            {{ adding ? 'Adding...' : 'Add Market' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Edit Market Modal -->
     <div v-if="showEditModal" class="modal-overlay" @click="showEditModal = false">
       <div class="modal-content configure-modal" @click.stop>
@@ -718,6 +845,21 @@ export default {
       is_active: ''
     })
     
+    const addForm = ref({
+      condition_id: '',
+      question: '',
+      token1: '',
+      token2: '',
+      answer1: '',
+      answer2: '',
+      market_slug: '',
+      category: 'crypto',
+      is_active: true
+    })
+    
+    const addError = ref('')
+    const adding = ref(false)
+    
     const editForm = ref({
       side_to_trade: 'BOTH',
       trading_mode: 'MARKET_MAKING',
@@ -861,6 +1003,61 @@ export default {
       setTimeout(() => clearInterval(interval), 600000)
     }
     
+    const addMarket = async () => {
+      // Validation
+      if (!addForm.value.condition_id || !addForm.value.question || 
+          !addForm.value.token1 || !addForm.value.token2) {
+        addError.value = 'Please fill in all required fields (Condition ID, Question, Token1, Token2)'
+        return
+      }
+      
+      adding.value = true
+      addError.value = ''
+      
+      try {
+        const marketData = {
+          condition_id: addForm.value.condition_id.trim(),
+          question: addForm.value.question.trim(),
+          token1: addForm.value.token1.trim(),
+          token2: addForm.value.token2.trim(),
+          answer1: addForm.value.answer1.trim() || undefined,
+          answer2: addForm.value.answer2.trim() || undefined,
+          market_slug: addForm.value.market_slug.trim() || undefined,
+          category: addForm.value.category,
+          is_active: addForm.value.is_active
+        }
+        
+        await store.dispatch('markets/createMarket', marketData)
+        
+        // Reset form
+        addForm.value = {
+          condition_id: '',
+          question: '',
+          token1: '',
+          token2: '',
+          answer1: '',
+          answer2: '',
+          market_slug: '',
+          category: 'crypto',
+          is_active: true
+        }
+        
+        showAddModal.value = false
+        addError.value = ''
+        
+        // Refresh markets list
+        applyFilters()
+        
+        alert('✅ Market added successfully!')
+      } catch (error) {
+        const errorMsg = error.response?.data?.detail || error.message || 'Unknown error'
+        addError.value = `Failed to add market: ${errorMsg}`
+        console.error('Error adding market:', error)
+      } finally {
+        adding.value = false
+      }
+    }
+    
     const editMarket = async (market) => {
       selectedMarket.value = market
       editForm.value = {
@@ -993,12 +1190,16 @@ export default {
       selectedMarkets,
       isAllSelected,
       filter,
+      addForm,
+      addError,
+      adding,
       editForm,
       editParams,
       expandedInfo,
       saving,
       applyFilters,
       fetchCryptoMarkets,
+      addMarket,
       editMarket,
       saveMarket,
       deleteMarket,
@@ -1364,6 +1565,33 @@ export default {
     flex: 1;
     min-width: 0;
   }
+}
+
+/* Add Market Modal Styles */
+.required {
+  color: #e74c3c;
+  font-weight: bold;
+}
+
+.form-help {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.alert {
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.alert-danger {
+  background-color: #fee;
+  border: 1px solid #fcc;
+  color: #c33;
 }
 </style>
 

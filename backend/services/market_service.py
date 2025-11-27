@@ -13,10 +13,14 @@ load_dotenv()
 
 # Crypto-related keywords for filtering
 CRYPTO_KEYWORDS = [
-    'bitcoin', 'btc', 'ethereum', 'eth', 'crypto', 'cryptocurrency',
-    'blockchain', 'solana', 'sol', 'cardano', 'ada', 'polkadot', 'dot',
-    'avalanche', 'avax', 'polygon', 'matic', 'chainlink', 'link',
-    'litecoin', 'ltc', 'ripple', 'xrp', 'dogecoin', 'doge', 'shiba',
+    # Major cryptocurrencies
+    'bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol', 
+    'cardano', 'ada', 'polkadot', 'dot', 'avalanche', 'avax',
+    'polygon', 'matic', 'chainlink', 'link', 'litecoin', 'ltc',
+    'ripple', 'xrp', 'dogecoin', 'doge', 'shiba', 'ethereum classic', 'etc',
+    'hyperliquid', 'hype', 'hyper',
+    
+    # Stablecoins and tokens
     'uniswap', 'uni', 'aave', 'maker', 'mkr', 'compound', 'comp',
     'tether', 'usdt', 'usdc', 'dai', 'binance', 'bnb', 'ftx', 'ftm',
     'fantom', 'cosmos', 'atom', 'algorand', 'algo', 'tezos', 'xtz',
@@ -24,7 +28,18 @@ CRYPTO_KEYWORDS = [
     'tron', 'trx', 'neo', 'dash', 'iota', 'vechain', 'vet',
     'theta', 'filecoin', 'fil', 'decentraland', 'mana', 'sandbox', 'sand',
     'axie', 'gala', 'enjin', 'enj', 'chiliz', 'chz', 'wbtc', 'steth',
-    'defi', 'nft', 'web3', 'metaverse', 'token', 'coin', 'satoshi'
+    
+    # General crypto terms
+    'crypto', 'cryptocurrency', 'blockchain', 'defi', 'nft', 'web3',
+    'metaverse', 'token', 'coin', 'satoshi', 'altcoin', 'alt coin',
+    
+    # Price prediction patterns
+    'price', 'hit', 'reach', 'above', 'below', 'trading', 'trade',
+    'november', 'december', 'january', 'february', 'march', 'april',
+    'may', 'june', 'july', 'august', 'september', 'october',
+    'weekly', 'monthly', 'daily', 'end of', 'by end', 'by',
+    'will', 'will bitcoin', 'will ethereum', 'will solana',
+    'what price', 'what will', 'price will'
 ]
 
 class MarketService:
@@ -73,19 +88,80 @@ class MarketService:
             self.client = None
     
     def is_crypto_related(self, text: str) -> bool:
-        """Check if text contains crypto-related keywords"""
+        """
+        Check if text contains crypto-related keywords or patterns.
+        Enhanced to catch price prediction markets for major cryptocurrencies.
+        """
         if not text:
             return False
         
         text_lower = text.lower()
-        return any(keyword in text_lower for keyword in CRYPTO_KEYWORDS)
+        
+        # Direct keyword matching
+        if any(keyword in text_lower for keyword in CRYPTO_KEYWORDS):
+            return True
+        
+        # Pattern matching for price prediction markets
+        # Examples: "What price will Bitcoin hit November 24-30"
+        #           "Will Ethereum reach $X by end of month"
+        crypto_coins = ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol',
+                       'dogecoin', 'doge', 'ripple', 'xrp', 'ethereum classic', 'etc',
+                       'hyperliquid', 'hype']
+        
+        price_patterns = ['price', 'hit', 'reach', 'above', 'below', 'trading at']
+        time_patterns = ['november', 'december', 'january', 'february', 'march', 'april',
+                        'may', 'june', 'july', 'august', 'september', 'october',
+                        'weekly', 'monthly', 'end of', 'by end', 'by']
+        
+        # Check if text contains both a crypto coin and a price/time pattern
+        has_crypto_coin = any(coin in text_lower for coin in crypto_coins)
+        has_price_pattern = any(pattern in text_lower for pattern in price_patterns)
+        has_time_pattern = any(pattern in text_lower for pattern in time_patterns)
+        
+        # If it has a crypto coin and (price pattern OR time pattern), it's likely a crypto market
+        if has_crypto_coin and (has_price_pattern or has_time_pattern):
+            return True
+        
+        # Check for common crypto market question patterns
+        question_patterns = [
+            'what price will', 'what will', 'will bitcoin', 'will ethereum',
+            'will solana', 'will doge', 'will xrp', 'will etc', 'will hype',
+            'bitcoin price', 'ethereum price', 'solana price', 'doge price',
+            'xrp price', 'etc price', 'hype price'
+        ]
+        
+        if any(pattern in text_lower for pattern in question_patterns):
+            return True
+        
+        return False
     
     def parse_sub_markets(self, market_data: Dict) -> List[Dict]:
         """
-        Parse sub-markets from a multi-outcome market.
-        For example, "Bitcoin price on Dec 31" with multiple price tiers.
+        Parse sub-markets from a market or event.
+        Handles both binary markets and multi-outcome markets.
+        For events with multiple markets, each market should be added separately.
         """
         sub_markets = []
+        
+        # Check if this market has sub-markets (markets array)
+        # Some API responses include a 'markets' array within an event
+        if 'markets' in market_data and isinstance(market_data['markets'], list):
+            # This is an event with multiple markets
+            for market in market_data['markets']:
+                tokens = market.get('tokens', [])
+                if len(tokens) >= 2:
+                    sub_markets.append({
+                        'condition_id': market.get('condition_id', market_data.get('condition_id', '')),
+                        'question': market.get('question', market_data.get('question', '')),
+                        'answer1': tokens[0].get('outcome', 'YES') if len(tokens) > 0 else 'YES',
+                        'answer2': tokens[1].get('outcome', 'NO') if len(tokens) > 1 else 'NO',
+                        'token1': tokens[0].get('token_id', '') if len(tokens) > 0 else '',
+                        'token2': tokens[1].get('token_id', '') if len(tokens) > 1 else '',
+                        'market_slug': market.get('market_slug', market_data.get('market_slug', '')),
+                        'neg_risk': market.get('neg_risk', market_data.get('neg_risk', 'FALSE')),
+                        'parent_market': market_data.get('condition_id', None)
+                    })
+            return sub_markets
         
         # Check if this is a multi-outcome market
         tokens = market_data.get('tokens', [])
@@ -93,33 +169,43 @@ class MarketService:
         if len(tokens) == 2:
             # Standard binary market (YES/NO)
             sub_markets.append({
-                'condition_id': market_data['condition_id'],
-                'question': market_data['question'],
-                'answer1': tokens[0]['outcome'],
-                'answer2': tokens[1]['outcome'],
-                'token1': tokens[0]['token_id'],
-                'token2': tokens[1]['token_id'],
+                'condition_id': market_data.get('condition_id', ''),
+                'question': market_data.get('question', ''),
+                'answer1': tokens[0].get('outcome', 'YES') if len(tokens) > 0 else 'YES',
+                'answer2': tokens[1].get('outcome', 'NO') if len(tokens) > 1 else 'NO',
+                'token1': tokens[0].get('token_id', '') if len(tokens) > 0 else '',
+                'token2': tokens[1].get('token_id', '') if len(tokens) > 1 else '',
                 'market_slug': market_data.get('market_slug', ''),
                 'neg_risk': market_data.get('neg_risk', 'FALSE'),
                 'parent_market': None
             })
         elif len(tokens) > 2:
-            # Multi-outcome market - create separate markets for each outcome pair
-            # This is a simplification; in practice, you might want more sophisticated logic
-            parent_question = market_data['question']
+            # Multi-outcome market - create separate markets for each outcome
+            # For crypto price markets, each price tier is a separate tradeable market
+            parent_question = market_data.get('question', '')
+            parent_condition_id = market_data.get('condition_id', '')
             
             for i, token in enumerate(tokens):
-                # Create a binary market for each outcome vs "others"
+                # For each outcome, create a market with that outcome vs all others
+                # In practice, Polymarket may have separate condition_ids for each outcome
+                # If we have a unique condition_id per outcome, use it
+                outcome_condition_id = token.get('condition_id', f"{parent_condition_id}_{i}")
+                
+                # Create a descriptive question for each sub-market
+                outcome_text = token.get('outcome', f'Option {i+1}')
+                sub_question = f"{parent_question} - {outcome_text}" if parent_question else outcome_text
+                
                 sub_markets.append({
-                    'condition_id': f"{market_data['condition_id']}_{i}",
-                    'question': f"{parent_question} - {token['outcome']}",
-                    'answer1': token['outcome'],
+                    'condition_id': outcome_condition_id,
+                    'question': sub_question,
+                    'answer1': outcome_text,
                     'answer2': 'Other',
-                    'token1': token['token_id'],
-                    'token2': tokens[0]['token_id'] if i > 0 else tokens[1]['token_id'],
+                    'token1': token.get('token_id', ''),
+                    # For binary markets, we need a second token - use the first other token
+                    'token2': tokens[0].get('token_id', '') if i > 0 else (tokens[1].get('token_id', '') if len(tokens) > 1 else ''),
                     'market_slug': market_data.get('market_slug', ''),
                     'neg_risk': market_data.get('neg_risk', 'FALSE'),
-                    'parent_market': market_data['condition_id']
+                    'parent_market': parent_condition_id if parent_condition_id else None
                 })
         
         return sub_markets
