@@ -55,7 +55,10 @@ export default {
         commit('SET_MARKETS', markets)
         console.log(`Loaded ${markets.length} markets`)
       } catch (error) {
-        commit('SET_ERROR', error.message)
+        const errorMsg = typeof error?.message === 'string' 
+          ? error.message 
+          : (error?.response?.data?.detail || JSON.stringify(error) || 'Unknown error')
+        commit('SET_ERROR', errorMsg)
         console.error('Error fetching markets:', error)
       } finally {
         commit('SET_LOADING', false)
@@ -71,7 +74,10 @@ export default {
         commit('SET_SELECTED_MARKET', market)
         return market
       } catch (error) {
-        commit('SET_ERROR', error.message)
+        const errorMsg = typeof error?.message === 'string' 
+          ? error.message 
+          : (error?.response?.data?.detail || JSON.stringify(error) || 'Unknown error')
+        commit('SET_ERROR', errorMsg)
         console.error('Error fetching market:', error)
       } finally {
         commit('SET_LOADING', false)
@@ -84,7 +90,10 @@ export default {
         commit('ADD_MARKET', market)
         return market
       } catch (error) {
-        commit('SET_ERROR', error.message)
+        const errorMsg = typeof error?.message === 'string' 
+          ? error.message 
+          : (error?.response?.data?.detail || JSON.stringify(error) || 'Unknown error')
+        commit('SET_ERROR', errorMsg)
         throw error
       }
     },
@@ -95,7 +104,10 @@ export default {
         commit('UPDATE_MARKET', market)
         return market
       } catch (error) {
-        commit('SET_ERROR', error.message)
+        const errorMsg = typeof error?.message === 'string' 
+          ? error.message 
+          : (error?.response?.data?.detail || JSON.stringify(error) || 'Unknown error')
+        commit('SET_ERROR', errorMsg)
         throw error
       }
     },
@@ -105,7 +117,10 @@ export default {
         await api.deleteMarket(id)
         commit('REMOVE_MARKET', id)
       } catch (error) {
-        commit('SET_ERROR', error.message)
+        const errorMsg = typeof error?.message === 'string' 
+          ? error.message 
+          : (error?.response?.data?.detail || JSON.stringify(error) || 'Unknown error')
+        commit('SET_ERROR', errorMsg)
         throw error
       }
     },
@@ -115,18 +130,47 @@ export default {
       commit('SET_ERROR', null)
       
       try {
-        const markets = await api.fetchCryptoMarkets()
-        commit('SET_MARKETS', markets)
-        return markets
+        const response = await api.fetchCryptoMarkets()
+        // fetchCryptoMarkets returns a status object, not markets array
+        // It starts a background task, so we return the response
+        return response
       } catch (error) {
-        // Extract detailed error message
-        const errorMessage = error.response?.data?.detail || error.message || 'Unknown error occurred'
+        // Extract detailed error message - handle object errors properly
+        let errorMessage = 'Unknown error occurred'
+        
+        if (typeof error === 'string') {
+          errorMessage = error
+        } else if (error?.response?.data?.detail) {
+          errorMessage = typeof error.response.data.detail === 'string' 
+            ? error.response.data.detail 
+            : JSON.stringify(error.response.data.detail)
+        } else if (error?.response?.data?.message) {
+          errorMessage = typeof error.response.data.message === 'string'
+            ? error.response.data.message
+            : JSON.stringify(error.response.data.message)
+        } else if (error?.data?.detail) {
+          errorMessage = typeof error.data.detail === 'string'
+            ? error.data.detail
+            : JSON.stringify(error.data.detail)
+        } else if (error?.message) {
+          errorMessage = typeof error.message === 'string'
+            ? error.message
+            : JSON.stringify(error.message)
+        } else if (error?.response?.data) {
+          try {
+            errorMessage = JSON.stringify(error.response.data)
+          } catch {
+            errorMessage = String(error.response.data)
+          }
+        }
+        
         commit('SET_ERROR', errorMessage)
         console.error('Error fetching crypto markets:', error)
         
         // Re-throw with more context
         const enhancedError = new Error(errorMessage)
         enhancedError.response = error.response
+        enhancedError.status = error.status || error.response?.status
         throw enhancedError
       } finally {
         commit('SET_LOADING', false)

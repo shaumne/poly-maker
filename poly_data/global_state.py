@@ -47,3 +47,8 @@ orders = {}
 # Format: {token_id: {'size': float, 'avgPrice': float}}
 positions = {}
 
+# ============ Account Status ============
+
+# Account restriction flags
+account_in_closed_only_mode = False  # Set to True when API returns "closed only mode" error
+

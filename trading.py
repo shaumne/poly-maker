@@ -74,28 +74,32 @@ def send_buy_order(order):
         trade = False
 
     if trade:
+        # Check if account is in closed only mode
+        if global_state.account_in_closed_only_mode:
+            print("⏸️  Skipping buy order - account is in closed only mode")
+            return
+        
         # Only place orders with prices between 0.01 and 0.99 to avoid extreme positions
         # (0.01-0.99 range allows trading on both sides of prediction markets)
         if order['price'] >= 0.01 and order['price'] <= 0.99:
             print(f'Creating new order for {order["size"]} at {order["price"]}')
             print(order['token'], 'BUY', order['price'], order['size'])
             
-            # create_order method now handles DRY_RUN internally
-            # Convert neg_risk from string to boolean
-            # Handle both 'TRUE'/'FALSE' strings and boolean values
-            neg_risk_value = False
-            if isinstance(order.get('neg_risk'), str):
-                neg_risk_value = order['neg_risk'].upper() == 'TRUE'
-            elif isinstance(order.get('neg_risk'), bool):
-                neg_risk_value = order['neg_risk']
-            
-            client.create_order(
+            # create_order method now handles DRY_RUN internally and market validation
+            # neg_risk will be automatically determined from market data if None
+            # Pass None to let create_order() auto-detect from market
+            result = client.create_order(
                 order['token'], 
                 'BUY', 
                 order['price'], 
                 order['size'], 
-                neg_risk=neg_risk_value
+                neg_risk=None  # Auto-detect from market
             )
+            
+            # Check if order creation failed due to validation
+            if result.get('validation_error'):
+                print(f"⚠️  Order validation failed: {result.get('error', 'Unknown error')}")
+                return
         else:
             print(f"Not creating buy order because price {order['price']:.3f} is outside acceptable range (0.01-0.99)")
     else:
@@ -139,22 +143,21 @@ def send_sell_order(order):
 
     print(f'Creating new order for {order["size"]} at {order["price"]}')
     
-    # create_order method now handles DRY_RUN internally
-    # Convert neg_risk from string to boolean
-    # Handle both 'TRUE'/'FALSE' strings and boolean values
-    neg_risk_value = False
-    if isinstance(order.get('neg_risk'), str):
-        neg_risk_value = order['neg_risk'].upper() == 'TRUE'
-    elif isinstance(order.get('neg_risk'), bool):
-        neg_risk_value = order['neg_risk']
-    
-    client.create_order(
+    # create_order method now handles DRY_RUN internally and market validation
+    # neg_risk will be automatically determined from market data if None
+    # Pass None to let create_order() auto-detect from market
+    result = client.create_order(
         order['token'], 
         'SELL', 
         order['price'], 
         order['size'], 
-        neg_risk=neg_risk_value
+        neg_risk=None  # Auto-detect from market
     )
+    
+    # Check if order creation failed due to validation
+    if result.get('validation_error'):
+        print(f"⚠️  Order validation failed: {result.get('error', 'Unknown error')}")
+        return
 
 # Dictionary to store locks for each market to prevent concurrent trading on the same market
 market_locks = {}
@@ -181,19 +184,52 @@ async def perform_trade(market):
         try:
             client = global_state.client
             
-            # Check if market exists in dataframe
+            # Try to get market from service layer first (faster lookup)
+            market_obj = None
+            try:
+                import sys
+                import os
+                sys.path.append(os.path.join(os.path.dirname(__file__), 'backend'))
+                from services.market_mapping_service import get_market_mapper
+                mapper = get_market_mapper()
+                market_obj = mapper.get_market_by_condition_id(market)
+            except Exception as e:
+                # Fallback to dataframe if service layer fails
+                print(f"⚠️  Could not use service layer for market lookup: {e}, falling back to dataframe")
+            
+            # Check if market exists in dataframe (fallback or primary if service layer not available)
             if global_state.df.empty:
-                print(f"⚠️  perform_trade called for {market} but no markets loaded in dataframe")
+                if not market_obj:
+                    print(f"⚠️  perform_trade called for {market} but no markets loaded in dataframe and service layer returned None")
+                    return
+            else:
+                market_rows = global_state.df[global_state.df['condition_id'] == market]
+                if market_rows.empty:
+                    if not market_obj:
+                        print(f"⚠️  perform_trade called for {market} but market not found in dataframe or service layer")
+                        print(f"   Available markets: {global_state.df['condition_id'].tolist() if not global_state.df.empty else 'None'}")
+                        return
+                else:
+                    # Get market details from the configuration
+                    row = market_rows.iloc[0]
+            
+            # If we got market from service layer but not from dataframe, try to use service layer data
+            # For now, we still need dataframe format, so we'll use dataframe as primary source
+            # but validate with service layer
+            if market_obj and global_state.df.empty:
+                print(f"⚠️  Market found in service layer but dataframe is empty. Cannot proceed without dataframe format.")
                 return
             
-            market_rows = global_state.df[global_state.df['condition_id'] == market]
-            if market_rows.empty:
-                print(f"⚠️  perform_trade called for {market} but market not found in dataframe")
-                print(f"   Available markets: {global_state.df['condition_id'].tolist() if not global_state.df.empty else 'None'}")
+            # Get market details from the configuration (use dataframe as primary source for now)
+            if not global_state.df.empty:
+                market_rows = global_state.df[global_state.df['condition_id'] == market]
+                if market_rows.empty:
+                    print(f"⚠️  Market not found in dataframe")
+                    return
+                row = market_rows.iloc[0]
+            else:
+                print(f"⚠️  Cannot proceed: dataframe is empty")
                 return
-            
-            # Get market details from the configuration
-            row = market_rows.iloc[0]
             print(f"🔍 Processing trade for market: {row['question']} (ID: {market})")      
             # Determine decimal precision from tick size
             round_length = len(str(row['tick_size']).split(".")[1])
@@ -261,6 +297,10 @@ async def perform_trade(market):
                 if deets['best_bid'] is None or deets['best_ask'] is None or deets['best_bid_size'] is None or deets['best_ask_size'] is None:
                     deets = get_best_bid_ask_deets(market, detail['name'], 20, 0.1)
                 
+                # Try with even smaller size if still None (market might have very low liquidity)
+                if deets['best_bid'] is None or deets['best_ask'] is None:
+                    deets = get_best_bid_ask_deets(market, detail['name'], 1, 0.1)
+                
                 # Extract all order book details
                 best_bid = deets['best_bid']
                 best_bid_size = deets['best_bid_size']
@@ -273,9 +313,18 @@ async def perform_trade(market):
                 second_best_ask_size = deets['second_best_ask_size']
                 top_ask = deets['top_ask']
                 
-                # Round prices to appropriate precision
-                best_bid = round(best_bid, round_length)
-                best_ask = round(best_ask, round_length)
+                # Round prices to appropriate precision - handle None values
+                if best_bid is not None:
+                    best_bid = round(best_bid, round_length)
+                else:
+                    print(f"⚠️  Warning: best_bid is None for token {token} (market may have no buy orders), skipping trade")
+                    continue
+                
+                if best_ask is not None:
+                    best_ask = round(best_ask, round_length)
+                else:
+                    print(f"⚠️  Warning: best_ask is None for token {token} (market may have no sell orders), skipping trade")
+                    continue
 
                 # Calculate ratio of buy vs sell liquidity in the market
                 try:
@@ -284,13 +333,22 @@ async def perform_trade(market):
                     overall_ratio = 0
 
                 try:
-                    second_best_bid = round(second_best_bid, round_length)
-                    second_best_ask = round(second_best_ask, round_length)
+                    if second_best_bid is not None:
+                        second_best_bid = round(second_best_bid, round_length)
+                    if second_best_ask is not None:
+                        second_best_ask = round(second_best_ask, round_length)
                 except:
                     pass
                 
-                top_bid = round(top_bid, round_length)
-                top_ask = round(top_ask, round_length)
+                if top_bid is not None:
+                    top_bid = round(top_bid, round_length)
+                else:
+                    top_bid = best_bid  # Fallback to best_bid if top_bid is None
+                
+                if top_ask is not None:
+                    top_ask = round(top_ask, round_length)
+                else:
+                    top_ask = best_ask  # Fallback to best_ask if top_ask is None
 
                 # Get our current position and average price
                 pos = get_position(token)
@@ -309,7 +367,10 @@ async def perform_trade(market):
                 ask_price = round(ask_price, round_length)
 
                 # Calculate mid price for reference
-                mid_price = (top_bid + top_ask) / 2
+                if top_bid is not None and top_ask is not None:
+                    mid_price = (top_bid + top_ask) / 2
+                else:
+                    mid_price = (best_bid + best_ask) / 2 if best_bid is not None and best_ask is not None else 0.5
                 
                 # Log market conditions for this outcome
                 print(f"\nFor {detail['answer']}. Orders: {orders} Position: {position}, "

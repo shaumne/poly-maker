@@ -24,8 +24,16 @@ client.interceptors.request.use(
 client.interceptors.response.use(
   response => response.data,
   error => {
-    console.error('API Error:', error.response?.data || error.message)
-    return Promise.reject(error)
+    // Preserve the original error structure for better error handling
+    const apiError = {
+      ...error,
+      response: error.response,
+      message: error.message || 'API request failed',
+      status: error.response?.status || error.status,
+      data: error.response?.data || error.data
+    }
+    console.error('API Error:', apiError.response?.data || apiError.message, apiError)
+    return Promise.reject(apiError)
   }
 )
 
@@ -37,6 +45,10 @@ export default {
   
   getMarket(id) {
     return client.get(`/markets/${id}`)
+  },
+  
+  fetchMarketBySlug(slug) {
+    return client.get(`/markets/slug/${slug}`)
   },
   
   createMarket(data) {
@@ -59,11 +71,19 @@ export default {
     return client.put(`/markets/${id}/config`, data)
   },
   
+  fetchAllMarkets() {
+    return client.get('/markets/fetch')
+  },
+  
   fetchCryptoMarkets() {
     return client.get('/markets/crypto/fetch')
   },
   
   getFetchStatus() {
+    return client.get('/markets/fetch/status')
+  },
+  
+  getCryptoFetchStatus() {
     return client.get('/markets/crypto/fetch/status')
   },
   

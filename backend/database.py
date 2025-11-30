@@ -1,7 +1,7 @@
 """
 Database models and configuration for Polymarket Trading Bot
 """
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -18,9 +18,15 @@ class Market(Base):
     question = Column(Text, nullable=False)
     answer1 = Column(String, nullable=False)
     answer2 = Column(String, nullable=False)
-    token1 = Column(String, nullable=False)
-    token2 = Column(String, nullable=False)
+    token1 = Column(String, nullable=False, index=True)  # Index for fast token lookup
+    token2 = Column(String, nullable=False, index=True)  # Index for fast token lookup
     market_slug = Column(String)
+    
+    # Composite index for common queries: (token1, token2, is_active)
+    __table_args__ = (
+        Index('idx_market_tokens_active', 'token1', 'token2', 'is_active'),
+        Index('idx_market_condition_active', 'condition_id', 'is_active'),
+    )
     
     # Trading configuration
     side_to_trade = Column(String, default='BOTH')  # YES, NO, BOTH
@@ -91,8 +97,13 @@ class Position(Base):
     __tablename__ = 'positions'
     
     id = Column(Integer, primary_key=True, index=True)
-    market_id = Column(Integer, ForeignKey('markets.id'), nullable=False)
+    market_id = Column(Integer, ForeignKey('markets.id', ondelete='CASCADE'), nullable=False, index=True)
     token_id = Column(String, nullable=False, index=True)
+    
+    # Composite index for common queries: (market_id, token_id)
+    __table_args__ = (
+        Index('idx_position_market_token', 'market_id', 'token_id'),
+    )
     
     # Position data
     size = Column(Float, default=0.0)
@@ -116,11 +127,18 @@ class Order(Base):
     __tablename__ = 'orders'
     
     id = Column(Integer, primary_key=True, index=True)
-    market_id = Column(Integer, ForeignKey('markets.id'), nullable=False)
+    market_id = Column(Integer, ForeignKey('markets.id', ondelete='CASCADE'), nullable=False, index=True)
     
     # Order details
     order_id = Column(String, index=True)  # Polymarket order ID
-    token_id = Column(String, nullable=False)
+    token_id = Column(String, nullable=False, index=True)
+    
+    # Composite indexes for common queries
+    __table_args__ = (
+        Index('idx_order_market_token', 'market_id', 'token_id'),
+        Index('idx_order_market_status', 'market_id', 'status'),
+        Index('idx_order_token_status', 'token_id', 'status'),
+    )
     side_type = Column(String, nullable=False)  # BUY or SELL
     side = Column(String)  # YES or NO
     price = Column(Float, nullable=False)

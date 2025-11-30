@@ -1,5 +1,6 @@
 from dotenv import load_dotenv          # Environment variable management
 import os                           # Operating system interface
+import sys                          # System-specific parameters and functions
 import logging                      # Structured logging
 from typing import Dict, Optional, Tuple, Any, List  # Type hints
 
@@ -31,6 +32,7 @@ load_dotenv()
 
 # Import API constants
 from poly_data.api_constants import ERROR_CODE_DESCRIPTIONS
+from poly_data.rate_limiter import get_rate_limiter
 
 
 class PolymarketClient:
@@ -198,7 +200,7 @@ class PolymarketClient:
         self.web3 = web3
 
     
-    def create_order(self, marketId: str, action: str, price: float, size: float, neg_risk: bool = False) -> Dict[str, Any]:
+    def create_order(self, marketId: str, action: str, price: float, size: float, neg_risk: Optional[bool] = None) -> Dict[str, Any]:
         """
         Create and submit a new order to the Polymarket order book.
         
@@ -207,11 +209,66 @@ class PolymarketClient:
             action (str): "BUY" or "SELL"
             price (float): Order price (0-1 range for prediction markets)
             size (float): Order size in USDC
-            neg_risk (bool, optional): Whether this is a negative risk market. Defaults to False.
+            neg_risk (bool, optional): Whether this is a negative risk market. 
+                                      If None, will be automatically determined from market data.
             
         Returns:
             dict: Response from the API containing order details, or empty dict on error
         """
+        # Validate market and get market information
+        market = None
+        validation_result = None
+        
+        try:
+            # Import validation service (lazy import to avoid circular dependencies)
+            sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
+            from services.order_validation_service import get_order_validator
+            
+            validator = get_order_validator()
+            validation_result = validator.validate_market_for_order(marketId, action, neg_risk)
+            
+            if not validation_result.is_valid:
+                error_msg = validation_result.error_message or "Market validation failed"
+                error_code = validation_result.error_code.value if validation_result.error_code else "VALIDATION_ERROR"
+                
+                logger.error(f"Market validation failed: {error_msg} (code: {error_code})")
+                print(f"❌ Market validation failed: {error_msg}")
+                
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "error_code": error_code,
+                    "validation_error": True
+                }
+            
+            market = validation_result.market
+            
+            # Get neg_risk from market if not provided
+            if neg_risk is None:
+                neg_risk = validator.get_market_neg_risk(marketId)
+                if neg_risk is None:
+                    # Fallback to False if market not found (shouldn't happen after validation)
+                    neg_risk = False
+                    logger.warning(f"Could not determine neg_risk for token {marketId}, defaulting to False")
+                else:
+                    logger.info(f"Auto-detected neg_risk={neg_risk} from market data for token {marketId}")
+            
+            # Log warnings if any
+            if validation_result.warnings:
+                for warning in validation_result.warnings:
+                    logger.warning(f"Market validation warning: {warning}")
+                    
+        except ImportError as e:
+            # If validation service is not available, log warning but continue
+            logger.warning(f"Order validation service not available: {e}. Proceeding without validation.")
+            if neg_risk is None:
+                neg_risk = False
+        except Exception as e:
+            # Don't fail order creation if validation fails, but log the error
+            logger.warning(f"Error during market validation: {e}. Proceeding with order creation.")
+            if neg_risk is None:
+                neg_risk = False
+        
         # Check DRY_RUN mode - validate early before any API calls
         try:
             from backend.config import Config
@@ -224,14 +281,22 @@ class PolymarketClient:
         if is_dry_run:
             # Convert marketId to string for safe slicing
             market_id_str = str(marketId)
-            logger.debug(f"[DRY RUN] Would create {action} order: {size} @ ${price:.3f} for token {market_id_str[:20]}...")
-            print(f"[DRY RUN] Would create {action} order: {size} @ ${price:.3f} for token {market_id_str[:20]}...")
-            return {"dry_run": True, "action": action, "price": price, "size": size, "token_id": marketId}
+            logger.debug(f"[DRY RUN] Would create {action} order: {size} @ ${price:.3f} for token {market_id_str[:20]}... (neg_risk={neg_risk})")
+            print(f"[DRY RUN] Would create {action} order: {size} @ ${price:.3f} for token {market_id_str[:20]}... (neg_risk={neg_risk})")
+            return {
+                "dry_run": True, 
+                "action": action, 
+                "price": price, 
+                "size": size, 
+                "token_id": marketId,
+                "neg_risk": neg_risk,
+                "market_id": market.id if market else None
+            }
         
         # DRY_RUN is False - proceed with real API call
         # Convert marketId to string for safe slicing
         market_id_str = str(marketId)
-        logger.info(f"🔴 LIVE TRADING: Creating real {action} order: {size} @ ${price:.3f} for token {market_id_str[:20]}...")
+        logger.info(f"🔴 LIVE TRADING: Creating real {action} order: {size} @ ${price:.3f} for token {market_id_str[:20]}... (neg_risk={neg_risk})")
         
         # Create order parameters
         # According to docs: neg_risk flag must be set correctly for negative risk markets
@@ -262,8 +327,14 @@ class PolymarketClient:
             signed_order = self.client.create_order(order_args)
             
         try:
+            # Apply rate limiting for CLOB POST /order endpoint
+            # Sustained: 40/s, Burst: 240/s
+            rate_limiter = get_rate_limiter()
+            rate_limiter.wait_if_needed_sync('clob_post_order')
+            
             # Submit the signed order to the API with GTC (Good-Till-Cancelled) order type
             resp = self.client.post_order(signed_order, OrderType.GTC)
+            rate_limiter.record_request('clob_post_order')
             
             # Validate response according to Polymarket API documentation
             # Docs: Response format includes: success, errorMsg, orderId, orderHashes, status
@@ -292,8 +363,36 @@ class PolymarketClient:
                     if order_id:
                         print(f"   Order ID: {order_id}")
                     
+                    # Check for account restriction errors
+                    if 'closed only mode' in error_msg.lower() or 'closed-only' in error_msg.lower():
+                        # Set global flag to prevent further order attempts
+                        try:
+                            import poly_data.global_state as global_state
+                            global_state.account_in_closed_only_mode = True
+                        except Exception:
+                            pass
+                        
+                        print("")
+                        print("⚠️  ACCOUNT RESTRICTION: Your account is in 'closed only mode'")
+                        print("")
+                        print("   This means:")
+                        print("   • You can only CLOSE existing positions (sell what you own)")
+                        print("   • You CANNOT open new positions (cannot place new buy orders)")
+                        print("")
+                        print("   🔧 How to resolve:")
+                        print("   1. Contact Polymarket support to remove the restriction")
+                        print("   2. Check your account status on Polymarket.com")
+                        print("   3. This restriction is usually temporary and may be lifted automatically")
+                        print("")
+                        print("   💡 Workaround:")
+                        print("   • You can still close existing positions")
+                        print("   • Wait for the restriction to be lifted before trading again")
+                        print("")
+                        print("   ⏸️  Order creation attempts will be paused until restriction is lifted")
+                        print("")
+                        logger.error("Account is in closed only mode - cannot create new orders")
                     # Check for signature-related errors and provide detailed diagnostics
-                    if 'invalid signature' in error_msg.lower() or 'signature' in error_msg.lower():
+                    elif 'invalid signature' in error_msg.lower() or 'signature' in error_msg.lower():
                         logger.error("⚠️  SIGNATURE ERROR - Detailed diagnostics:")
                         logger.error(f"   1. Funder (Proxy) address: {self.browser_wallet[:10]}...{self.browser_wallet[-8:]}")
                         logger.error(f"   2. Signature type: {self.signature_type} (Browser Wallet)")
@@ -381,7 +480,34 @@ class PolymarketClient:
                 print(f"❌ Polymarket API error: {error_message}")
                 
                 # Provide helpful suggestions based on common errors
-                if 'invalid signature' in error_msg.lower() or 'signature' in error_msg.lower():
+                if 'closed only mode' in error_msg.lower() or 'closed-only' in error_msg.lower():
+                    # Set global flag to prevent further order attempts
+                    try:
+                        import poly_data.global_state as global_state
+                        global_state.account_in_closed_only_mode = True
+                    except Exception:
+                        pass
+                    
+                    print("")
+                    print("⚠️  ACCOUNT RESTRICTION: Your account is in 'closed only mode'")
+                    print("")
+                    print("   This means:")
+                    print("   • You can only CLOSE existing positions (sell what you own)")
+                    print("   • You CANNOT open new positions (cannot place new buy orders)")
+                    print("")
+                    print("   🔧 How to resolve:")
+                    print("   1. Contact Polymarket support to remove the restriction")
+                    print("   2. Check your account status on Polymarket.com")
+                    print("   3. This restriction is usually temporary and may be lifted automatically")
+                    print("")
+                    print("   💡 Workaround:")
+                    print("   • You can still close existing positions")
+                    print("   • Wait for the restriction to be lifted before trading again")
+                    print("")
+                    print("   ⏸️  Order creation attempts will be paused until restriction is lifted")
+                    print("")
+                    logger.error("Account is in closed only mode - cannot create new orders")
+                elif 'invalid signature' in error_msg.lower() or 'signature' in error_msg.lower():
                     logger.error("⚠️  SIGNATURE ERROR - Detailed diagnostics:")
                     logger.error(f"   1. Funder (Proxy) address: {self.browser_wallet[:10]}...{self.browser_wallet[-8:]}")
                     logger.error(f"   2. Signature type: {self.signature_type} (Browser Wallet)")
@@ -598,7 +724,13 @@ class PolymarketClient:
             return {"dry_run": True, "asset_id": asset_id}
         
         try:
+            # Apply rate limiting for CLOB DELETE /cancel-market-orders endpoint
+            # Sustained: 20/s, Burst: 80/s
+            rate_limiter = get_rate_limiter()
+            rate_limiter.wait_if_needed_sync('clob_delete_orders')
+            
             resp = self.client.cancel_market_orders(asset_id=str(asset_id))
+            rate_limiter.record_request('clob_delete_orders')
             
             # Validate response according to Polymarket API documentation
             # Response format: {"canceled": string[], "not_canceled": {order_id: reason}}
@@ -673,7 +805,13 @@ class PolymarketClient:
             return {"dry_run": True, "market_id": marketId}
         
         try:
+            # Apply rate limiting for CLOB DELETE /cancel-market-orders endpoint
+            # Sustained: 20/s, Burst: 80/s
+            rate_limiter = get_rate_limiter()
+            rate_limiter.wait_if_needed_sync('clob_delete_orders')
+            
             resp = self.client.cancel_market_orders(market=marketId)
+            rate_limiter.record_request('clob_delete_orders')
             
             # Validate response according to Polymarket API documentation
             # Response format: {"canceled": string[], "not_canceled": {order_id: reason}}

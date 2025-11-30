@@ -3,9 +3,6 @@
     <div class="markets-header">
       <h2>Markets</h2>
       <div class="controls">
-        <button @click="fetchCryptoMarkets" class="btn btn-primary" :disabled="loading">
-          🔄 Fetch Crypto Markets
-        </button>
         <button @click="showAddModal = true" class="btn btn-success">
           ➕ Add Market
         </button>
@@ -15,11 +12,27 @@
     <!-- Filters -->
     <div class="card">
       <div class="filters">
+        <div class="form-group" style="flex: 2;">
+          <label class="form-label">🔍 Search</label>
+          <input 
+            v-model="filter.search" 
+            type="text" 
+            class="form-input" 
+            placeholder="Search markets by question..."
+            @keyup.enter="applyFilters"
+          />
+        </div>
         <div class="form-group">
           <label class="form-label">Category</label>
           <select v-model="filter.category" class="form-select">
             <option value="">All</option>
             <option value="crypto">Crypto</option>
+            <option value="politics">Politics</option>
+            <option value="sports">Sports</option>
+            <option value="economics">Economics</option>
+            <option value="entertainment">Entertainment</option>
+            <option value="technology">Technology</option>
+            <option value="science">Science</option>
             <option value="other">Other</option>
           </select>
         </div>
@@ -32,6 +45,7 @@
           </select>
         </div>
         <button @click="applyFilters" class="btn btn-primary">Apply</button>
+        <button @click="clearFilters" class="btn btn-secondary">Clear</button>
       </div>
     </div>
 
@@ -96,8 +110,8 @@
                 <span class="badge badge-success">{{ market.trading_mode }}</span>
               </td>
               <td>
-                <span :class="['badge', market.category === 'crypto' ? 'badge-warning' : 'badge-primary']">
-                  {{ market.category }}
+                <span :class="['badge', getCategoryBadgeClass(market.category)]">
+                  {{ market.category || 'other' }}
                 </span>
               </td>
               <td>
@@ -128,6 +142,31 @@
         </div>
         <div class="modal-body">
           <form @submit.prevent="addMarket">
+            <div class="form-group">
+              <label class="form-label">
+                🔗 Polymarket URL (Auto Fill)
+              </label>
+              <div style="display: flex; gap: 8px;">
+                <input 
+                  v-model="addForm.url" 
+                  type="text" 
+                  class="form-input" 
+                  placeholder="https://polymarket.com/event/what-price-will-bitcoin-hit-november-24-30"
+                  @blur="fetchMarketFromUrl"
+                />
+                <button 
+                  type="button" 
+                  @click="fetchMarketFromUrl" 
+                  class="btn btn-primary"
+                  :disabled="loadingMarketFromUrl"
+                  style="white-space: nowrap;"
+                >
+                  {{ loadingMarketFromUrl ? '⏳' : '🔍' }}
+                </button>
+              </div>
+              <small class="form-help">Paste Polymarket URL to automatically fill market information</small>
+            </div>
+
             <div class="form-group">
               <label class="form-label">
                 Condition ID <span class="required">*</span>
@@ -841,11 +880,13 @@ export default {
     })
     
     const filter = ref({
+      search: '',
       category: '',
       is_active: ''
     })
     
     const addForm = ref({
+      url: '',
       condition_id: '',
       question: '',
       token1: '',
@@ -859,6 +900,7 @@ export default {
     
     const addError = ref('')
     const adding = ref(false)
+    const loadingMarketFromUrl = ref(false)
     
     const editForm = ref({
       side_to_trade: 'BOTH',
@@ -921,11 +963,222 @@ export default {
       }
     }
     
+    const getCategoryBadgeClass = (category) => {
+      const categoryClasses = {
+        'crypto': 'badge-warning',
+        'politics': 'badge-danger',
+        'sports': 'badge-success',
+        'economics': 'badge-info',
+        'entertainment': 'badge-purple',
+        'technology': 'badge-blue',
+        'science': 'badge-cyan',
+        'other': 'badge-secondary'
+      }
+      return categoryClasses[category] || 'badge-secondary'
+    }
+    
     const applyFilters = () => {
       const params = {}
+      if (filter.value.search && filter.value.search.trim()) {
+        params.search = filter.value.search.trim()
+      }
       if (filter.value.category) params.category = filter.value.category
-      if (filter.value.is_active) params.is_active = filter.value.is_active === 'true'
+      // Convert string to boolean properly
+      if (filter.value.is_active !== null && filter.value.is_active !== undefined && filter.value.is_active !== '') {
+        params.is_active = filter.value.is_active === 'true' || filter.value.is_active === true
+      }
       store.dispatch('markets/fetchMarkets', params)
+    }
+    
+    const clearFilters = () => {
+      filter.value = {
+        search: '',
+        category: '',
+        is_active: ''
+      }
+      store.dispatch('markets/fetchMarkets', {})
+    }
+    
+    const fetchMarketFromUrl = async () => {
+      if (!addForm.value.url || !addForm.value.url.trim()) {
+        return
+      }
+      
+      loadingMarketFromUrl.value = true
+      addError.value = ''
+      
+      try {
+        // Extract slug from URL
+        const url = addForm.value.url.trim()
+        let slug = ''
+        
+        // Extract slug from various URL formats
+        const urlPatterns = [
+          /polymarket\.com\/event\/([^?\/]+)/,
+          /polymarket\.com\/market\/([^?\/]+)/,
+          /\/event\/([^?\/]+)/,
+          /\/market\/([^?\/]+)/
+        ]
+        
+        for (const pattern of urlPatterns) {
+          const match = url.match(pattern)
+          if (match && match[1]) {
+            slug = match[1]
+            break
+          }
+        }
+        
+        if (!slug) {
+          addError.value = 'Invalid URL format. Example: https://polymarket.com/event/market-slug'
+          loadingMarketFromUrl.value = false
+          return
+        }
+        
+        // Fetch market data from backend
+        const marketData = await api.fetchMarketBySlug(slug)
+        
+        if (marketData) {
+          // Fill form with fetched data
+          addForm.value.condition_id = marketData.condition_id || ''
+          addForm.value.question = marketData.question || ''
+          addForm.value.token1 = marketData.token1 || ''
+          addForm.value.token2 = marketData.token2 || ''
+          addForm.value.answer1 = marketData.answer1 || 'YES'
+          addForm.value.answer2 = marketData.answer2 || 'NO'
+          addForm.value.market_slug = marketData.market_slug || slug
+          addForm.value.category = marketData.category || 'crypto'
+          
+          // Check if required fields are filled
+          if (!addForm.value.condition_id || !addForm.value.token1 || !addForm.value.token2) {
+            addError.value = 'Warning: Some required fields are missing. Please check Condition ID, Token1, and Token2.'
+          } else {
+            addError.value = ''
+          }
+        } else {
+          addError.value = 'Market not found. Please check the slug.'
+        }
+      } catch (error) {
+        const errorMsg = error.response?.data?.detail || error.message || 'Failed to fetch market information'
+        addError.value = `Error: ${errorMsg}`
+        console.error('Error fetching market from URL:', error)
+      } finally {
+        loadingMarketFromUrl.value = false
+      }
+    }
+    
+    const fetchAllMarkets = async () => {
+      try {
+        // Show loading state
+        const loadingMessage = 'Fetching ALL markets from Polymarket...\nThis may take several minutes.\n\nMarkets will be automatically categorized.\n\nThe process will run in the background.\n\nContinue?'
+        if (confirm(loadingMessage)) {
+          const response = await api.fetchAllMarkets()
+          
+          if (response && response.status === 'fetching') {
+            alert('✅ Market fetch started in background!\n\nYou can check the progress by refreshing the page.\n\nStatus endpoint: /api/markets/fetch/status')
+            
+            // Start polling for status
+            pollFetchStatus()
+          } else {
+            alert('✅ Markets fetched successfully!')
+          }
+        }
+      } catch (error) {
+        console.error('Full error object in fetchAllMarkets:', error)
+        console.error('Error response data:', error?.response?.data)
+        let errorMessage = 'Failed to fetch markets.\n\n'
+        
+        // Helper function to extract error message - handles all error formats including FastAPI validation errors
+        const getErrorMessage = (err) => {
+          if (typeof err === 'string') return err
+          if (!err) return 'Unknown error occurred'
+          
+          // Check response.data first (most common)
+          if (err?.response?.data) {
+            const data = err.response.data
+            if (typeof data === 'string') return data
+            
+            // Handle detail array (FastAPI validation errors - 422)
+            if (data?.detail) {
+              if (Array.isArray(data.detail)) {
+                return data.detail.map(d => {
+                  if (typeof d === 'object' && d?.msg) {
+                    const loc = Array.isArray(d.loc) ? d.loc.join('.') : (d.loc || 'field')
+                    return `${loc}: ${d.msg}`
+                  }
+                  return String(d)
+                }).join('\n')
+              }
+              if (typeof data.detail === 'string') return data.detail
+            }
+            
+            if (data?.message && typeof data.message === 'string') return data.message
+            try {
+              const str = JSON.stringify(data, null, 2)
+              return str.length > 500 ? str.substring(0, 500) + '...' : str
+            } catch {
+              return String(data)
+            }
+          }
+          
+          if (err?.data) {
+            const data = err.data
+            if (typeof data === 'string') return data
+            if (data?.detail) {
+              if (Array.isArray(data.detail)) {
+                return data.detail.map(d => String(d)).join('\n')
+              }
+              if (typeof data.detail === 'string') return data.detail
+            }
+            if (data?.message && typeof data.message === 'string') return data.message
+          }
+          
+          if (err?.message) {
+            if (typeof err.message === 'string') return err.message
+            try {
+              return JSON.stringify(err.message, null, 2)
+            } catch {
+              return String(err.message)
+            }
+          }
+          
+          try {
+            const str = JSON.stringify(err, Object.getOwnPropertyNames(err), 2)
+            return str.length > 500 ? str.substring(0, 500) + '...' : str
+          } catch {
+            return String(err)
+          }
+        }
+        
+        const errorDetail = getErrorMessage(error)
+        
+        // Provide helpful error messages
+        if (error.response?.status === 409 || error?.status === 409) {
+          errorMessage += 'Already in Progress:\n'
+          errorMessage += errorDetail
+          errorMessage += '\n\nPlease wait for the current fetch to complete.'
+        } else if (error.response?.status === 400 || error?.status === 400) {
+          errorMessage += 'Configuration Error:\n'
+          errorMessage += errorDetail
+          errorMessage += '\n\nPlease check your .env file and ensure PK and BROWSER_ADDRESS are set correctly.'
+        } else if (error.response?.status === 404 || error?.status === 404) {
+          errorMessage += 'No Markets Found:\n'
+          errorMessage += errorDetail
+          errorMessage += '\n\nThis might be a temporary API issue. Please try again later.'
+        } else if (error.response?.status === 503 || error?.status === 503) {
+          errorMessage += 'Connection Error:\n'
+          errorMessage += errorDetail
+          errorMessage += '\n\nPlease check your internet connection and Polymarket API status.'
+        } else if (error.response?.status === 500 || error?.status === 500) {
+          errorMessage += 'Server Error:\n'
+          errorMessage += errorDetail
+          errorMessage += '\n\nPlease check backend logs for more details.'
+        } else {
+          errorMessage += errorDetail
+        }
+        
+        alert(errorMessage)
+        console.error('Error fetching markets:', error)
+      }
     }
     
     const fetchCryptoMarkets = async () => {
@@ -935,41 +1188,107 @@ export default {
         if (confirm(loadingMessage)) {
           const response = await store.dispatch('markets/fetchCryptoMarkets')
           
-          if (response && response.status === 'fetching') {
+          if (response && (response.status === 'fetching' || response.status === 'processing')) {
             alert('✅ Market fetch started in background!\n\nYou can check the progress by refreshing the page.\n\nStatus endpoint: /api/markets/crypto/fetch/status')
             
             // Start polling for status
-            pollFetchStatus()
+            pollCryptoFetchStatus()
           } else {
             alert('✅ Crypto markets fetched successfully!')
           }
         }
       } catch (error) {
+        console.error('Full error object in fetchCryptoMarkets:', error)
+        console.error('Error response data:', error?.response?.data)
         let errorMessage = 'Failed to fetch crypto markets.\n\n'
         
+        // Helper function to extract error message - handles all error formats including FastAPI validation errors
+        const getErrorMessage = (err) => {
+          if (typeof err === 'string') return err
+          if (!err) return 'Unknown error occurred'
+          
+          // Check response.data first (most common)
+          if (err?.response?.data) {
+            const data = err.response.data
+            if (typeof data === 'string') return data
+            
+            // Handle detail array (FastAPI validation errors - 422)
+            if (data?.detail) {
+              if (Array.isArray(data.detail)) {
+                return data.detail.map(d => {
+                  if (typeof d === 'object' && d?.msg) {
+                    const loc = Array.isArray(d.loc) ? d.loc.join('.') : (d.loc || 'field')
+                    return `${loc}: ${d.msg}`
+                  }
+                  return String(d)
+                }).join('\n')
+              }
+              if (typeof data.detail === 'string') return data.detail
+            }
+            
+            if (data?.message && typeof data.message === 'string') return data.message
+            try {
+              const str = JSON.stringify(data, null, 2)
+              return str.length > 500 ? str.substring(0, 500) + '...' : str
+            } catch {
+              return String(data)
+            }
+          }
+          
+          if (err?.data) {
+            const data = err.data
+            if (typeof data === 'string') return data
+            if (data?.detail) {
+              if (Array.isArray(data.detail)) {
+                return data.detail.map(d => String(d)).join('\n')
+              }
+              if (typeof data.detail === 'string') return data.detail
+            }
+            if (data?.message && typeof data.message === 'string') return data.message
+          }
+          
+          if (err?.message) {
+            if (typeof err.message === 'string') return err.message
+            try {
+              return JSON.stringify(err.message, null, 2)
+            } catch {
+              return String(err.message)
+            }
+          }
+          
+          try {
+            const str = JSON.stringify(err, Object.getOwnPropertyNames(err), 2)
+            return str.length > 500 ? str.substring(0, 500) + '...' : str
+          } catch {
+            return String(err)
+          }
+        }
+        
+        const errorDetail = getErrorMessage(error)
+        
         // Provide helpful error messages
-        if (error.response?.status === 409) {
+        if (error.response?.status === 409 || error?.status === 409) {
           errorMessage += 'Already in Progress:\n'
-          errorMessage += error.response?.data?.detail || error.message
+          errorMessage += errorDetail
           errorMessage += '\n\nPlease wait for the current fetch to complete.'
-        } else if (error.response?.status === 400) {
+        } else if (error.response?.status === 400 || error?.status === 400) {
           errorMessage += 'Configuration Error:\n'
-          errorMessage += error.response?.data?.detail || error.message
+          errorMessage += errorDetail
           errorMessage += '\n\nPlease check your .env file and ensure PK and BROWSER_ADDRESS are set correctly.'
-        } else if (error.response?.status === 404) {
+        } else if (error.response?.status === 404 || error?.status === 404) {
           errorMessage += 'No Markets Found:\n'
-          errorMessage += error.response?.data?.detail || error.message
+          errorMessage += errorDetail
           errorMessage += '\n\nThis might be a temporary API issue. Please try again later.'
-        } else if (error.response?.status === 503) {
+        } else if (error.response?.status === 503 || error?.status === 503) {
           errorMessage += 'Connection Error:\n'
-          errorMessage += error.response?.data?.detail || error.message
+          errorMessage += errorDetail
           errorMessage += '\n\nPlease check your internet connection and Polymarket API status.'
-        } else if (error.response?.status === 500) {
+        } else if (error.response?.status === 500 || error?.status === 500) {
           errorMessage += 'Server Error:\n'
-          errorMessage += error.response?.data?.detail || error.message
+          errorMessage += errorDetail
           errorMessage += '\n\nPlease check backend logs for more details.'
         } else {
-          errorMessage += error.response?.data?.detail || error.message || 'Unknown error occurred'
+          errorMessage += errorDetail
         }
         
         alert(errorMessage)
@@ -996,6 +1315,32 @@ export default {
           }
         } catch (error) {
           console.error('Error polling fetch status:', error)
+        }
+      }, 5000)
+      
+      // Stop polling after 10 minutes
+      setTimeout(() => clearInterval(interval), 600000)
+    }
+    
+    const pollCryptoFetchStatus = () => {
+      // Poll fetch status every 5 seconds
+      const interval = setInterval(async () => {
+        try {
+          const status = await api.getCryptoFetchStatus()
+          console.log('Crypto fetch status:', status)
+          
+          if (status.status === 'completed' || status.status === 'error') {
+            clearInterval(interval)
+            if (status.status === 'completed') {
+              alert(`✅ Crypto market fetch completed!\n\nSaved ${status.total_saved} markets to database.`)
+              // Refresh markets list with current filters
+              applyFilters()
+            } else {
+              alert(`❌ Crypto market fetch failed:\n\n${status.error || 'Unknown error'}`)
+            }
+          }
+        } catch (error) {
+          console.error('Error polling crypto fetch status:', error)
         }
       }, 5000)
       
@@ -1198,6 +1543,10 @@ export default {
       expandedInfo,
       saving,
       applyFilters,
+      clearFilters,
+      fetchMarketFromUrl,
+      loadingMarketFromUrl,
+      fetchAllMarkets,
       fetchCryptoMarkets,
       addMarket,
       editMarket,
@@ -1209,7 +1558,8 @@ export default {
       bulkActivate,
       bulkDeactivate,
       bulkDelete,
-      resetToDefaults
+      resetToDefaults,
+      getCategoryBadgeClass
     }
   }
 }
@@ -1592,6 +1942,22 @@ export default {
   background-color: #fee;
   border: 1px solid #fcc;
   color: #c33;
+}
+
+/* Category Badge Colors */
+.badge-purple {
+  background-color: #9b59b6;
+  color: white;
+}
+
+.badge-blue {
+  background-color: #3498db;
+  color: white;
+}
+
+.badge-cyan {
+  background-color: #1abc9c;
+  color: white;
 }
 </style>
 

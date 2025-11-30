@@ -19,6 +19,12 @@ class TradingMode(str, Enum):
 
 class MarketCategory(str, Enum):
     CRYPTO = "crypto"
+    POLITICS = "politics"
+    SPORTS = "sports"
+    ECONOMICS = "economics"
+    ENTERTAINMENT = "entertainment"
+    TECHNOLOGY = "technology"
+    SCIENCE = "science"
     OTHER = "other"
 
 # Market schemas
