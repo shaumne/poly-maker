@@ -2,9 +2,19 @@
 Configuration and Environment Settings for Trading Bot
 """
 import os
-from dotenv import load_dotenv
+import sys
 
-load_dotenv()
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+# Use our robust env loading utility that handles BOM and encoding issues
+try:
+    from poly_data.env_utils import load_dotenv_safe, validate_env_variables
+    load_dotenv_safe()
+except ImportError:
+    # Fallback to standard dotenv with utf-8-sig encoding (handles BOM)
+    from dotenv import load_dotenv
+    load_dotenv(encoding='utf-8-sig')
 
 class Config:
     """Global configuration for the trading bot"""

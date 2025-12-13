@@ -87,11 +87,19 @@ def process_data(json_datas, trade=True):
                 continue
                 
             process_book_data(asset, json_data)
-            print(f"📊 Received book update for market: {asset}")
-
+            
+            # Validate that order book has meaningful data before trading
+            bids_count = len(json_data.get('bids', []))
+            asks_count = len(json_data.get('asks', []))
+            print(f"📊 Received book update for market: {asset} (bids: {bids_count}, asks: {asks_count})")
+            
+            # Only trigger trade if order book has both bids and asks
             if trade:
-                print(f"🔄 Triggering perform_trade for market: {asset}")
-                asyncio.create_task(perform_trade(asset))
+                if bids_count > 0 and asks_count > 0:
+                    print(f"🔄 Triggering perform_trade for market: {asset}")
+                    asyncio.create_task(perform_trade(asset))
+                else:
+                    print(f"⏳ Skipping trade for {asset}: order book incomplete (bids: {bids_count}, asks: {asks_count})")
                 
         # Handle 'price_change' event - Price level updates
         # Docs (updated Sept 15, 2025): event_type, market, price_changes[], timestamp
@@ -133,8 +141,19 @@ def process_data(json_datas, trade=True):
                     print(f"   Asset {asset_id[:20]}...: {side} {new_size} @ {price_level}, best_bid={best_bid}, best_ask={best_ask}")
 
             if trade:
-                print(f"💰 Price change detected for {asset}, triggering perform_trade")
-                asyncio.create_task(perform_trade(asset))
+                # Validate order book has data before triggering trade
+                if asset in global_state.all_data:
+                    market_data = global_state.all_data[asset]
+                    has_bids = len(market_data.get('bids', {})) > 0
+                    has_asks = len(market_data.get('asks', {})) > 0
+                    
+                    if has_bids and has_asks:
+                        print(f"💰 Price change detected for {asset}, triggering perform_trade")
+                        asyncio.create_task(perform_trade(asset))
+                    else:
+                        print(f"⏳ Price change for {asset} but order book incomplete, waiting for full book data")
+                else:
+                    print(f"⏳ Price change for {asset} but no order book data yet, waiting...")
         
         # Handle 'tick_size_change' event - Minimum tick size changes
         # Docs: event_type, asset_id, market, old_tick_size, new_tick_size, side, timestamp

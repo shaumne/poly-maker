@@ -11,6 +11,8 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+from poly_data.rate_limiter import get_rate_limiter
+
 spreadsheet = get_spreadsheet()
 
 def get_markets_df(wk_full):
@@ -90,7 +92,11 @@ def get_earnings(client):
         "requestPath": "/rewards/user/markets"
     }
 
+    # Apply rate limiting for general API (5000 requests / 10s)
+    rate_limiter = get_rate_limiter()
+    rate_limiter.wait_if_needed_sync('general')
     r = requests.get(url,  params=params)
+    rate_limiter.record_request('general')
     results = r.json()
 
     data = pd.DataFrame(results['data'])

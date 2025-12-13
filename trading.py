@@ -20,7 +20,10 @@ except ImportError:
 print(f"{'🔵 DRY RUN MODE' if DRY_RUN_ENABLED else '🔴 LIVE TRADING MODE'}")
 
 # Import utility functions for trading
-from poly_data.trading_utils import get_best_bid_ask_deets, get_order_prices, get_buy_sell_amount, round_down, round_up
+from poly_data.trading_utils import (
+    get_best_bid_ask_deets, get_order_prices, get_buy_sell_amount, 
+    round_down, round_up, validate_order_book_data, validate_price_sanity
+)
 from poly_data.data_utils import get_position, get_order, set_position
 
 # Create directory for storing position risk information
@@ -184,6 +187,14 @@ async def perform_trade(market):
         try:
             client = global_state.client
             
+            # ======== ORDER BOOK DATA VALIDATION ========
+            # First, validate that we have order book data for this market
+            orderbook_validation = validate_order_book_data(market)
+            if not orderbook_validation['is_valid']:
+                print(f"⏳ Skipping trade for {market[:30]}...: {orderbook_validation['error']}")
+                print(f"   Waiting for WebSocket to receive order book data...")
+                return
+            
             # Try to get market from service layer first (faster lookup)
             market_obj = None
             try:
@@ -325,6 +336,19 @@ async def perform_trade(market):
                 else:
                     print(f"⚠️  Warning: best_ask is None for token {token} (market may have no sell orders), skipping trade")
                     continue
+                
+                # ======== PRICE SANITY VALIDATION ========
+                # Validate that prices are within expected bounds
+                price_validation = validate_price_sanity(best_bid, best_ask, detail['answer'])
+                if not price_validation['is_valid']:
+                    print(f"⚠️  Price validation failed for {detail['answer']}: {price_validation.get('error', 'Unknown error')}")
+                    print(f"   Skipping trade - prices may be stale or invalid")
+                    continue
+                
+                # Log any warnings but continue with trade
+                if price_validation.get('warnings'):
+                    for warning in price_validation['warnings']:
+                        print(f"⚠️  Price warning: {warning}")
 
                 # Calculate ratio of buy vs sell liquidity in the market
                 try:

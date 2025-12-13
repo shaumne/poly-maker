@@ -202,14 +202,28 @@ def init_db():
     """Initialize database tables"""
     Base.metadata.create_all(bind=engine)
     
-    # Initialize trading status
     db = SessionLocal()
     try:
+        # Initialize trading status
         status = db.query(TradingStatus).first()
         if not status:
             status = TradingStatus(is_running=False)
             db.add(status)
             db.commit()
+        
+        # Clean up orphan trading_params records
+        # These can occur if markets are deleted but cascade doesn't work properly
+        from sqlalchemy import text
+        try:
+            orphan_count = db.execute(text(
+                "DELETE FROM trading_params WHERE market_id NOT IN (SELECT id FROM markets)"
+            )).rowcount
+            db.commit()
+            if orphan_count > 0:
+                print(f"Cleaned up {orphan_count} orphan trading_params records")
+        except Exception as e:
+            print(f"Warning: Could not clean orphan records: {e}")
+            db.rollback()
     finally:
         db.close()
 

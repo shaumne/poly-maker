@@ -4,7 +4,12 @@ import os
 import requests
 import time
 import warnings
+import sys
 warnings.filterwarnings("ignore")
+
+# Add parent directory to path for importing poly_data modules
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from poly_data.rate_limiter import get_rate_limiter
 
 
 if not os.path.exists('data'):
@@ -264,7 +269,11 @@ def calculate_annualized_volatility(df, hours):
     return round(annualized_volatility, 2)
 
 def add_volatility(row):
+    # Apply rate limiting for CLOB Price History endpoint (100 requests / 10s)
+    rate_limiter = get_rate_limiter()
+    rate_limiter.wait_if_needed_sync('clob_price_history')
     res = requests.get(f'https://clob.polymarket.com/prices-history?interval=1m&market={row["token1"]}&fidelity=10')
+    rate_limiter.record_request('clob_price_history')
     price_df = pd.DataFrame(res.json()['history'])
     price_df['t'] = pd.to_datetime(price_df['t'], unit='s')
     price_df['p'] = price_df['p'].round(2)

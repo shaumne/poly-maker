@@ -198,11 +198,271 @@ async def search_markets(
     markets = query.limit(limit).all()
     return markets
 
+@router.get("/slug/{slug}/all")
+async def get_all_markets_by_slug(slug: str):
+    """
+    Fetch ALL sub-markets from a Polymarket event by slug.
+    
+    Events can contain multiple markets (e.g., "What price will Bitcoin hit?" 
+    with options like $90k, $95k, $100k, each being a separate tradeable market).
+    
+    This endpoint returns ALL markets within an event, allowing users to 
+    select which ones to add to the database.
+    
+    Returns:
+        List of market dictionaries, each with condition_id, question, tokens, etc.
+    """
+    from services.market_service import MarketService
+    
+    try:
+        market_service = MarketService()
+        
+        # Fetch from events endpoint
+        url = f"https://gamma-api.polymarket.com/events/slug/{slug}"
+        rate_limiter = get_rate_limiter()
+        rate_limiter.wait_if_needed_sync('gamma_events')
+        response = requests.get(url, timeout=10)
+        rate_limiter.record_request('gamma_events')
+        
+        if response.status_code == 200:
+            event_data = response.json()
+            
+            # Handle different response formats
+            if isinstance(event_data, dict):
+                event = event_data.get('data', event_data)
+            elif isinstance(event_data, list) and len(event_data) > 0:
+                event = event_data[0]
+            else:
+                event = event_data
+            
+            # Get event title for context
+            event_title = event.get('title', '') or event.get('question', '')
+            event_description = event.get('description', '')
+            
+            # Get all markets from event
+            event_markets = event.get('markets', [])
+            
+            all_markets = []
+            
+            if event_markets and len(event_markets) > 0:
+                print(f"DEBUG: Found {len(event_markets)} markets in event '{event_title}'")
+                
+                for idx, market_data in enumerate(event_markets):
+                    # Extract market data using the same logic as get_market_by_slug
+                    market_info = _extract_market_info(market_data, event, slug, market_service)
+                    
+                    if market_info:
+                        # Add index and event info for clarity
+                        market_info['market_index'] = idx
+                        market_info['event_title'] = event_title
+                        market_info['total_markets_in_event'] = len(event_markets)
+                        all_markets.append(market_info)
+            
+            # If no markets array, try parse_sub_markets
+            if not all_markets:
+                parsed_markets = market_service.parse_sub_markets(event)
+                
+                if parsed_markets:
+                    for idx, market in enumerate(parsed_markets):
+                        question = market.get('question', '')
+                        category = market_service.categorize_market(question, event_description or event_title)
+                        market['category'] = category
+                        market['market_index'] = idx
+                        market['event_title'] = event_title
+                        market['total_markets_in_event'] = len(parsed_markets)
+                        all_markets.append(market)
+            
+            # If still no markets, create from event itself
+            if not all_markets:
+                if event.get('condition_id') or event.get('question') or event.get('title'):
+                    question = event.get('question') or event.get('title', '')
+                    category = market_service.categorize_market(question, event_description)
+                    
+                    all_markets.append({
+                        'condition_id': event.get('condition_id', ''),
+                        'question': question,
+                        'answer1': 'YES',
+                        'answer2': 'NO',
+                        'token1': '',
+                        'token2': '',
+                        'market_slug': slug,
+                        'category': category,
+                        'market_index': 0,
+                        'event_title': event_title,
+                        'total_markets_in_event': 1
+                    })
+            
+            if all_markets:
+                return {
+                    'event_title': event_title,
+                    'event_slug': slug,
+                    'total_markets': len(all_markets),
+                    'markets': all_markets
+                }
+        
+        # Try market endpoint as fallback
+        url = f"https://gamma-api.polymarket.com/markets/slug/{slug}"
+        rate_limiter = get_rate_limiter()
+        rate_limiter.wait_if_needed_sync('gamma_markets')
+        response = requests.get(url, timeout=10)
+        rate_limiter.record_request('gamma_markets')
+        
+        if response.status_code == 200:
+            market_data = response.json()
+            
+            if isinstance(market_data, dict):
+                market = market_data.get('data', market_data)
+            else:
+                market = market_data
+            
+            market_info = _extract_market_info(market, {}, slug, market_service)
+            
+            if market_info:
+                market_info['market_index'] = 0
+                market_info['event_title'] = market_info.get('question', '')
+                market_info['total_markets_in_event'] = 1
+                
+                return {
+                    'event_title': market_info.get('question', ''),
+                    'event_slug': slug,
+                    'total_markets': 1,
+                    'markets': [market_info]
+                }
+        
+        raise HTTPException(status_code=404, detail=f"No markets found for slug '{slug}'")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Error fetching all markets by slug: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error fetching markets: {error_msg}")
+
+
+def _extract_market_info(market_data: dict, event: dict, slug: str, market_service) -> dict:
+    """
+    Helper function to extract market information from API response.
+    
+    Args:
+        market_data: Market data from API
+        event: Parent event data (can be empty dict)
+        slug: Market/event slug
+        market_service: MarketService instance for categorization
+        
+    Returns:
+        Dictionary with market information or None if extraction fails
+    """
+    try:
+        # Extract token IDs - clobTokenIds is the most reliable source
+        clob_token_ids_raw = market_data.get('clobTokenIds', [])
+        
+        # Parse clobTokenIds - it might be a JSON string
+        clob_token_ids = []
+        if isinstance(clob_token_ids_raw, str):
+            try:
+                clob_token_ids = json.loads(clob_token_ids_raw)
+            except (json.JSONDecodeError, ValueError):
+                clob_token_ids = []
+        elif isinstance(clob_token_ids_raw, list):
+            clob_token_ids = clob_token_ids_raw
+        else:
+            clob_token_ids = []
+        
+        token1 = ''
+        token2 = ''
+        answer1 = 'YES'
+        answer2 = 'NO'
+        
+        # Try clobTokenIds first
+        if clob_token_ids and len(clob_token_ids) >= 2:
+            token1 = str(clob_token_ids[0]) if clob_token_ids[0] is not None else ''
+            token2 = str(clob_token_ids[1]) if clob_token_ids[1] is not None else ''
+        else:
+            # Try outcomes array
+            outcomes = market_data.get('outcomes', [])
+            tokens = market_data.get('tokens', []) or market_data.get('outcomeTokens', [])
+            
+            # Parse outcomes - might be JSON string
+            if isinstance(outcomes, str):
+                try:
+                    outcomes = json.loads(outcomes)
+                except:
+                    outcomes = ['YES', 'NO']
+            
+            # Handle outcomes array
+            if outcomes and len(outcomes) >= 2:
+                if isinstance(outcomes[0], dict):
+                    token1 = (outcomes[0].get('token_id') or outcomes[0].get('id') or 
+                             outcomes[0].get('tokenId') or outcomes[0].get('asset_id') or '')
+                    answer1 = outcomes[0].get('outcome', outcomes[0].get('name', 'YES'))
+                elif isinstance(outcomes[0], str):
+                    answer1 = outcomes[0]
+                
+                if isinstance(outcomes[1], dict):
+                    token2 = (outcomes[1].get('token_id') or outcomes[1].get('id') or 
+                             outcomes[1].get('tokenId') or outcomes[1].get('asset_id') or '')
+                    answer2 = outcomes[1].get('outcome', outcomes[1].get('name', 'NO'))
+                elif isinstance(outcomes[1], str):
+                    answer2 = outcomes[1]
+            
+            # Handle tokens array
+            if (not token1 or not token2) and tokens and len(tokens) >= 2:
+                if isinstance(tokens[0], dict):
+                    token1 = (tokens[0].get('token_id') or tokens[0].get('id') or 
+                             tokens[0].get('tokenId') or tokens[0].get('asset_id') or '')
+                    answer1 = tokens[0].get('outcome', tokens[0].get('name', answer1))
+                elif isinstance(tokens[0], (str, int)):
+                    token1 = str(tokens[0])
+                
+                if isinstance(tokens[1], dict):
+                    token2 = (tokens[1].get('token_id') or tokens[1].get('id') or 
+                             tokens[1].get('tokenId') or tokens[1].get('asset_id') or '')
+                    answer2 = tokens[1].get('outcome', tokens[1].get('name', answer2))
+                elif isinstance(tokens[1], (str, int)):
+                    token2 = str(tokens[1])
+        
+        # Get question and condition ID
+        question = market_data.get('question', '') or event.get('title', '')
+        condition_id = (market_data.get('conditionId', '') or market_data.get('condition_id', '') or 
+                       event.get('condition_id', '') or market_data.get('id', ''))
+        
+        # Get neg_risk flag
+        neg_risk_raw = market_data.get('negRisk', market_data.get('neg_risk', event.get('negRisk', 'FALSE')))
+        if isinstance(neg_risk_raw, bool):
+            neg_risk = 'TRUE' if neg_risk_raw else 'FALSE'
+        else:
+            neg_risk = str(neg_risk_raw).upper() if neg_risk_raw else 'FALSE'
+        
+        # Categorize
+        description = event.get('description', '') or event.get('title', '')
+        category = market_service.categorize_market(question, description)
+        
+        return {
+            'condition_id': condition_id,
+            'question': question,
+            'answer1': str(answer1) if answer1 else 'YES',
+            'answer2': str(answer2) if answer2 else 'NO',
+            'token1': str(token1) if token1 else '',
+            'token2': str(token2) if token2 else '',
+            'market_slug': market_data.get('slug', '') or slug,
+            'category': category,
+            'neg_risk': neg_risk
+        }
+        
+    except Exception as e:
+        print(f"Error extracting market info: {e}")
+        return None
+
+
 @router.get("/slug/{slug}")
 async def get_market_by_slug(slug: str):
     """
     Fetch market data from Polymarket by slug (from URL).
-    Returns market information that can be used to add a market.
+    Returns the first market and info about additional sub-markets if present.
+    
+    For events with multiple markets, use GET /slug/{slug}/all to get all markets.
     """
     from services.market_service import MarketService
     import re
@@ -343,8 +603,18 @@ async def get_market_by_slug(slug: str):
                 description = event.get('description', '') or event.get('title', '')
                 category = market_service.categorize_market(question, description)
                 
+                # Get neg_risk flag
+                neg_risk_raw = market_data.get('negRisk', market_data.get('neg_risk', event.get('negRisk', 'FALSE')))
+                if isinstance(neg_risk_raw, bool):
+                    neg_risk = 'TRUE' if neg_risk_raw else 'FALSE'
+                else:
+                    neg_risk = str(neg_risk_raw).upper() if neg_risk_raw else 'FALSE'
+                
                 # Debug: Print what we found
                 print(f"DEBUG: Extracted data - condition_id: {condition_id[:20] if condition_id else 'None'}..., token1: {token1[:20] if token1 else 'None'}..., token2: {token2[:20] if token2 else 'None'}...")
+                
+                # Count total sub-markets in event
+                total_sub_markets = len(event_markets)
                 
                 return {
                     'condition_id': condition_id,
@@ -354,7 +624,13 @@ async def get_market_by_slug(slug: str):
                     'token1': str(token1) if token1 else '',
                     'token2': str(token2) if token2 else '',
                     'market_slug': slug,
-                    'category': category
+                    'category': category,
+                    'neg_risk': neg_risk,
+                    # Sub-market information
+                    'has_sub_markets': total_sub_markets > 1,
+                    'total_sub_markets': total_sub_markets,
+                    'event_title': event.get('title', '') or event.get('question', ''),
+                    'sub_markets_hint': f"This event contains {total_sub_markets} markets. Use /slug/{slug}/all to get all of them." if total_sub_markets > 1 else None
                 }
             
             # Parse markets from event using parse_sub_markets
@@ -530,9 +806,12 @@ async def create_market(market: MarketCreate, db: Session = Depends(get_db)):
         db.add(db_market)
         db.flush()  # Flush to get the ID without committing
         
-        # Create default trading params
-        default_params = TradingParams(market_id=db_market.id)
-        db.add(default_params)
+        # Create default trading params only if they don't exist
+        existing_params = db.query(TradingParams).filter(TradingParams.market_id == db_market.id).first()
+        if not existing_params:
+            default_params = TradingParams(market_id=db_market.id)
+            db.add(default_params)
+        
         db.commit()
         db.refresh(db_market)
         
@@ -685,6 +964,36 @@ async def bulk_delete_markets(
         "message": f"Successfully deleted {deleted_count} market(s)",
         "deleted_count": deleted_count
     }
+
+@router.post("/cleanup-orphans")
+async def cleanup_orphan_records(db: Session = Depends(get_db)):
+    """
+    Clean up orphan trading_params records that don't have a corresponding market.
+    This can happen if markets are deleted but the cascade doesn't work properly.
+    """
+    try:
+        # Find orphan trading_params (where market_id doesn't exist in markets table)
+        orphan_params = db.query(TradingParams).filter(
+            ~TradingParams.market_id.in_(
+                db.query(Market.id)
+            )
+        ).all()
+        
+        deleted_count = len(orphan_params)
+        
+        for param in orphan_params:
+            db.delete(param)
+        
+        db.commit()
+        
+        return {
+            "message": f"Cleaned up {deleted_count} orphan trading_params record(s)",
+            "deleted_count": deleted_count
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error cleaning up orphan records: {str(e)}")
+
 
 @router.delete("/all")
 async def delete_all_markets(db: Session = Depends(get_db)):

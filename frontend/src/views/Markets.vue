@@ -74,58 +74,122 @@
       
       <div v-if="loading" class="loading">Loading markets...</div>
       <div v-else-if="markets.length > 0">
-        <table class="table">
-          <thead>
-            <tr>
-              <th style="width: 50px;">
+        <!-- Expand/Collapse All Controls -->
+        <div class="group-controls">
+          <button @click="expandAllGroups" class="btn btn-sm btn-secondary">
+            ▼ Expand All
+          </button>
+          <button @click="collapseAllGroups" class="btn btn-sm btn-secondary">
+            ▶ Collapse All
+          </button>
+        </div>
+        
+        <!-- Grouped Markets View -->
+        <div class="markets-grouped">
+          <div 
+            v-for="(group, eventName) in groupedMarkets" 
+            :key="eventName"
+            class="market-group"
+          >
+            <!-- Group Header (Event) -->
+            <div 
+              class="market-group-header"
+              :class="{ 
+                'expanded': expandedGroups.includes(eventName),
+                'standalone': eventName === 'Standalone Markets'
+              }"
+              @click="toggleGroup(eventName)"
+            >
+              <div class="group-header-left">
+                <span class="group-expand-icon">
+                  {{ expandedGroups.includes(eventName) ? '▼' : '▶' }}
+                </span>
                 <input 
                   type="checkbox" 
-                  :checked="isAllSelected" 
-                  @change="toggleSelectAll"
-                  title="Select all"
+                  :checked="isGroupSelected(eventName)"
+                  @click.stop="toggleGroupSelection(eventName)"
+                  title="Select all markets in this event"
                 />
-              </th>
-              <th>Question</th>
-              <th>Side</th>
-              <th>Mode</th>
-              <th>Category</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="market in markets" :key="market.id">
-              <td>
-                <input 
-                  type="checkbox" 
-                  :value="market.id"
-                  v-model="selectedMarkets"
-                />
-              </td>
-              <td>{{ market.question }}</td>
-              <td>
-                <span class="badge badge-primary">{{ market.side_to_trade }}</span>
-              </td>
-              <td>
-                <span class="badge badge-success">{{ market.trading_mode }}</span>
-              </td>
-              <td>
-                <span :class="['badge', getCategoryBadgeClass(market.category)]">
-                  {{ market.category || 'other' }}
+                <div class="group-title">
+                  <span class="group-event-icon">{{ eventName === 'Standalone Markets' ? '📋' : '🎯' }}</span>
+                  <span class="group-event-name">{{ eventName }}</span>
+                </div>
+              </div>
+              <div class="group-header-right">
+                <span class="group-market-count">{{ group.length }} market(s)</span>
+                <span 
+                  class="group-active-count" 
+                  :class="{ 'all-active': getActiveCount(group) === group.length }"
+                >
+                  {{ getActiveCount(group) }}/{{ group.length }} active
                 </span>
-              </td>
-              <td>
-                <span :class="['badge', market.is_active ? 'badge-success' : 'badge-danger']">
-                  {{ market.is_active ? 'Active' : 'Inactive' }}
+                <span :class="['badge', getCategoryBadgeClass(group[0]?.category)]">
+                  {{ group[0]?.category || 'other' }}
                 </span>
-              </td>
-              <td>
-                <button @click="editMarket(market)" class="btn btn-primary btn-sm">Configure</button>
-                <button @click="deleteMarket(market.id)" class="btn btn-danger btn-sm">Delete</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </div>
+            </div>
+            
+            <!-- Expanded Sub-Markets -->
+            <div v-if="expandedGroups.includes(eventName)" class="market-group-content">
+              <table class="table sub-markets-table">
+                <thead>
+                  <tr>
+                    <th style="width: 40px;"></th>
+                    <th>Market Question</th>
+                    <th>Side</th>
+                    <th>Mode</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="market in group" :key="market.id" class="sub-market-row">
+                    <td>
+                      <input 
+                        type="checkbox" 
+                        :value="market.id"
+                        v-model="selectedMarkets"
+                      />
+                    </td>
+                    <td>
+                      <div class="sub-market-question">
+                        {{ getQuestionWithoutPrefix(market.question) }}
+                      </div>
+                      <div class="sub-market-answers">
+                        <span class="answer-tag yes">{{ market.answer1 || 'YES' }}</span>
+                        <span class="answer-tag no">{{ market.answer2 || 'NO' }}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span class="badge badge-primary">{{ market.side_to_trade }}</span>
+                    </td>
+                    <td>
+                      <span class="badge badge-info">{{ market.trading_mode }}</span>
+                    </td>
+                    <td>
+                      <span :class="['badge', market.is_active ? 'badge-success' : 'badge-danger']">
+                        {{ market.is_active ? 'Active' : 'Inactive' }}
+                      </span>
+                    </td>
+                    <td>
+                      <button @click="editMarket(market)" class="btn btn-primary btn-sm">Configure</button>
+                      <button @click="deleteMarket(market.id)" class="btn btn-danger btn-sm">Delete</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Summary Stats -->
+        <div class="markets-summary">
+          <span>{{ Object.keys(groupedMarkets).length }} event(s)</span>
+          <span class="separator">•</span>
+          <span>{{ markets.length }} total market(s)</span>
+          <span class="separator">•</span>
+          <span>{{ markets.filter(m => m.is_active).length }} active</span>
+        </div>
       </div>
       <div v-else class="empty-state">
         <div class="empty-state-icon">📊</div>
@@ -165,6 +229,24 @@
                 </button>
               </div>
               <small class="form-help">Paste Polymarket URL to automatically fill market information</small>
+              
+              <!-- Sub-markets indicator -->
+              <div v-if="hasSubMarkets && subMarketsInfo" class="sub-markets-info">
+                <div class="sub-markets-alert">
+                  <strong>📦 {{ subMarketsInfo.total }} markets found!</strong>
+                  <p v-if="subMarketsInfo.eventTitle">Event: {{ subMarketsInfo.eventTitle }}</p>
+                  <p>This event contains multiple tradeable markets.</p>
+                  <button 
+                    type="button" 
+                    @click="showAllSubMarkets" 
+                    class="btn btn-warning"
+                    :disabled="loadingSubMarkets"
+                    style="margin-top: 8px;"
+                  >
+                    {{ loadingSubMarkets ? '⏳ Loading...' : '📋 Show All Markets' }}
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div class="form-group">
@@ -854,6 +936,86 @@
         </div>
       </div>
     </div>
+
+    <!-- Sub-Markets Selection Modal -->
+    <div v-if="showSubMarketsModal" class="modal-overlay" @click="showSubMarketsModal = false">
+      <div class="modal-content modal-large" @click.stop>
+        <div class="modal-header">
+          <h3>📦 Select Markets to Add</h3>
+          <button @click="showSubMarketsModal = false" class="modal-close">×</button>
+        </div>
+        <div class="modal-body">
+          <!-- Event Title Header -->
+          <div v-if="subMarketsList.length > 0 && subMarketsList[0].event_title" class="event-header">
+            <div class="event-icon">🎯</div>
+            <div class="event-info">
+              <div class="event-label">Event</div>
+              <div class="event-title-text">{{ subMarketsList[0].event_title }}</div>
+              <div class="event-market-count">{{ subMarketsList.length }} tradeable market(s) in this event</div>
+            </div>
+          </div>
+          
+          <div class="sub-markets-controls">
+            <div class="sub-markets-stats">
+              <strong>{{ selectedSubMarkets.length }}</strong> of <strong>{{ subMarketsList.length }}</strong> selected
+            </div>
+            <div class="sub-markets-buttons">
+              <button type="button" @click="selectAllSubMarkets" class="btn btn-sm btn-secondary">
+                Select All
+              </button>
+              <button type="button" @click="deselectAllSubMarkets" class="btn btn-sm btn-secondary">
+                Deselect All
+              </button>
+            </div>
+          </div>
+          
+          <div class="sub-markets-list">
+            <div 
+              v-for="market in subMarketsList" 
+              :key="market.condition_id"
+              class="sub-market-item"
+              :class="{ 'selected': selectedSubMarkets.includes(market.condition_id), 'missing-data': !market.token1 || !market.token2 }"
+              @click="toggleSubMarketSelection(market.condition_id)"
+            >
+              <div class="sub-market-checkbox">
+                <input 
+                  type="checkbox" 
+                  :checked="selectedSubMarkets.includes(market.condition_id)"
+                  @click.stop="toggleSubMarketSelection(market.condition_id)"
+                />
+              </div>
+              <div class="sub-market-info">
+                <div class="sub-market-question">{{ market.question }}</div>
+                <div class="sub-market-details">
+                  <span class="badge badge-primary">{{ market.answer1 || 'YES' }}</span>
+                  <span class="badge badge-secondary">{{ market.answer2 || 'NO' }}</span>
+                  <span v-if="market.category" :class="['badge', getCategoryBadgeClass(market.category)]">
+                    {{ market.category }}
+                  </span>
+                  <span v-if="!market.token1 || !market.token2" class="badge badge-danger">
+                    Missing Tokens
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div v-if="subMarketsList.length === 0" class="empty-state">
+            <p>No markets found</p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button @click="showSubMarketsModal = false" class="btn btn-secondary">Cancel</button>
+          <button 
+            @click="addSelectedSubMarkets" 
+            class="btn btn-success" 
+            :disabled="addingMultiple || selectedSubMarkets.length === 0"
+          >
+            {{ addingMultiple ? '⏳ Adding...' : `Add ${selectedSubMarkets.length} Market(s)` }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -901,6 +1063,100 @@ export default {
     const addError = ref('')
     const adding = ref(false)
     const loadingMarketFromUrl = ref(false)
+    
+    // Sub-markets state
+    const hasSubMarkets = ref(false)
+    const subMarketsInfo = ref(null)
+    const showSubMarketsModal = ref(false)
+    const subMarketsList = ref([])
+    const selectedSubMarkets = ref([])
+    const loadingSubMarkets = ref(false)
+    const addingMultiple = ref(false)
+    
+    // Expanded groups state for accordion
+    const expandedGroups = ref([])
+    
+    // Computed: Group markets by event name
+    const groupedMarkets = computed(() => {
+      const groups = {}
+      
+      for (const market of markets.value) {
+        // Extract event name from question prefix [EventName] or use 'Standalone Markets'
+        const eventName = getEventPrefix(market.question) || 'Standalone Markets'
+        
+        if (!groups[eventName]) {
+          groups[eventName] = []
+        }
+        groups[eventName].push(market)
+      }
+      
+      // Sort groups: Standalone Markets at the end
+      const sortedGroups = {}
+      const keys = Object.keys(groups).sort((a, b) => {
+        if (a === 'Standalone Markets') return 1
+        if (b === 'Standalone Markets') return -1
+        return a.localeCompare(b)
+      })
+      
+      for (const key of keys) {
+        sortedGroups[key] = groups[key]
+      }
+      
+      return sortedGroups
+    })
+    
+    // Toggle group expand/collapse
+    const toggleGroup = (eventName) => {
+      const index = expandedGroups.value.indexOf(eventName)
+      if (index > -1) {
+        expandedGroups.value.splice(index, 1)
+      } else {
+        expandedGroups.value.push(eventName)
+      }
+    }
+    
+    // Check if all markets in a group are selected
+    const isGroupSelected = (eventName) => {
+      const group = groupedMarkets.value[eventName]
+      if (!group || group.length === 0) return false
+      return group.every(m => selectedMarkets.value.includes(m.id))
+    }
+    
+    // Toggle selection for all markets in a group
+    const toggleGroupSelection = (eventName) => {
+      const group = groupedMarkets.value[eventName]
+      if (!group) return
+      
+      const groupIds = group.map(m => m.id)
+      const allSelected = isGroupSelected(eventName)
+      
+      if (allSelected) {
+        // Deselect all in group
+        selectedMarkets.value = selectedMarkets.value.filter(id => !groupIds.includes(id))
+      } else {
+        // Select all in group
+        for (const id of groupIds) {
+          if (!selectedMarkets.value.includes(id)) {
+            selectedMarkets.value.push(id)
+          }
+        }
+      }
+    }
+    
+    // Get count of active markets in a group
+    const getActiveCount = (group) => {
+      return group.filter(m => m.is_active).length
+    }
+    
+    // Expand all groups
+    const expandAllGroups = () => {
+      expandedGroups.value = Object.keys(groupedMarkets.value)
+    }
+    
+    // Collapse all groups
+    const collapseAllGroups = () => {
+      expandedGroups.value = []
+    }
     
     const editForm = ref({
       side_to_trade: 'BOTH',
@@ -977,6 +1233,19 @@ export default {
       return categoryClasses[category] || 'badge-secondary'
     }
     
+    // Helper to extract event prefix from question (e.g., "[Bitcoin Price]" from "[Bitcoin Price] Will it hit $100k?")
+    const getEventPrefix = (question) => {
+      if (!question) return null
+      const match = question.match(/^\[([^\]]+)\]/)
+      return match ? match[1] : null
+    }
+    
+    // Helper to get question without the event prefix
+    const getQuestionWithoutPrefix = (question) => {
+      if (!question) return ''
+      return question.replace(/^\[[^\]]+\]\s*/, '')
+    }
+    
     const applyFilters = () => {
       const params = {}
       if (filter.value.search && filter.value.search.trim()) {
@@ -1006,6 +1275,8 @@ export default {
       
       loadingMarketFromUrl.value = true
       addError.value = ''
+      hasSubMarkets.value = false
+      subMarketsInfo.value = null
       
       try {
         // Extract slug from URL
@@ -1034,6 +1305,9 @@ export default {
           return
         }
         
+        // Store slug for later use
+        addForm.value._slug = slug
+        
         // Fetch market data from backend
         const marketData = await api.fetchMarketBySlug(slug)
         
@@ -1048,11 +1322,22 @@ export default {
           addForm.value.market_slug = marketData.market_slug || slug
           addForm.value.category = marketData.category || 'crypto'
           
-          // Check if required fields are filled
-          if (!addForm.value.condition_id || !addForm.value.token1 || !addForm.value.token2) {
-            addError.value = 'Warning: Some required fields are missing. Please check Condition ID, Token1, and Token2.'
+          // Check for sub-markets
+          if (marketData.has_sub_markets && marketData.total_sub_markets > 1) {
+            hasSubMarkets.value = true
+            subMarketsInfo.value = {
+              total: marketData.total_sub_markets,
+              eventTitle: marketData.event_title,
+              hint: marketData.sub_markets_hint
+            }
+            addError.value = `This event contains ${marketData.total_sub_markets} markets. Click "Show All Markets" to see and add them all.`
           } else {
-            addError.value = ''
+            // Check if required fields are filled
+            if (!addForm.value.condition_id || !addForm.value.token1 || !addForm.value.token2) {
+              addError.value = 'Warning: Some required fields are missing. Please check Condition ID, Token1, and Token2.'
+            } else {
+              addError.value = ''
+            }
           }
         } else {
           addError.value = 'Market not found. Please check the slug.'
@@ -1063,6 +1348,136 @@ export default {
         console.error('Error fetching market from URL:', error)
       } finally {
         loadingMarketFromUrl.value = false
+      }
+    }
+    
+    const showAllSubMarkets = async () => {
+      if (!addForm.value._slug) {
+        addError.value = 'Please enter a URL first'
+        return
+      }
+      
+      loadingSubMarkets.value = true
+      
+      try {
+        const result = await api.fetchAllMarketsBySlug(addForm.value._slug)
+        
+        if (result && result.markets && result.markets.length > 0) {
+          subMarketsList.value = result.markets
+          selectedSubMarkets.value = result.markets.map(m => m.condition_id) // Select all by default
+          showSubMarketsModal.value = true
+        } else {
+          addError.value = 'No markets found for this event'
+        }
+      } catch (error) {
+        const errorMsg = error.response?.data?.detail || error.message || 'Failed to fetch sub-markets'
+        addError.value = `Error: ${errorMsg}`
+        console.error('Error fetching sub-markets:', error)
+      } finally {
+        loadingSubMarkets.value = false
+      }
+    }
+    
+    const toggleSubMarketSelection = (conditionId) => {
+      const index = selectedSubMarkets.value.indexOf(conditionId)
+      if (index > -1) {
+        selectedSubMarkets.value.splice(index, 1)
+      } else {
+        selectedSubMarkets.value.push(conditionId)
+      }
+    }
+    
+    const selectAllSubMarkets = () => {
+      selectedSubMarkets.value = subMarketsList.value.map(m => m.condition_id)
+    }
+    
+    const deselectAllSubMarkets = () => {
+      selectedSubMarkets.value = []
+    }
+    
+    const addSelectedSubMarkets = async () => {
+      if (selectedSubMarkets.value.length === 0) {
+        alert('Please select at least one market to add')
+        return
+      }
+      
+      addingMultiple.value = true
+      let successCount = 0
+      let errorCount = 0
+      const errors = []
+      
+      try {
+        for (const conditionId of selectedSubMarkets.value) {
+          const market = subMarketsList.value.find(m => m.condition_id === conditionId)
+          if (!market) continue
+          
+          // Skip markets without required fields
+          if (!market.condition_id || !market.token1 || !market.token2) {
+            errors.push(`Skipped "${market.question?.substring(0, 50)}...": Missing required fields`)
+            errorCount++
+            continue
+          }
+          
+          try {
+            // Build question with event title prefix for better organization
+            let questionText = market.question || ''
+            const eventTitle = market.event_title || subMarketsList.value[0]?.event_title || ''
+            
+            // Add event title as prefix if it's different from the question
+            // This helps identify which event the sub-market belongs to
+            if (eventTitle && !questionText.toLowerCase().includes(eventTitle.toLowerCase().substring(0, 20))) {
+              questionText = `[${eventTitle}] ${questionText}`
+            }
+            
+            const marketData = {
+              condition_id: market.condition_id,
+              question: questionText,
+              token1: market.token1,
+              token2: market.token2,
+              answer1: market.answer1 || 'YES',
+              answer2: market.answer2 || 'NO',
+              market_slug: market.market_slug || '',
+              category: market.category || 'crypto',
+              neg_risk: market.neg_risk || 'FALSE',
+              is_active: true
+            }
+            
+            await store.dispatch('markets/createMarket', marketData)
+            successCount++
+          } catch (err) {
+            const errMsg = err.response?.data?.detail || err.message || 'Unknown error'
+            // Check if it's a duplicate error
+            if (errMsg.includes('already exists') || errMsg.includes('UNIQUE constraint')) {
+              errors.push(`Skipped "${market.question?.substring(0, 30)}...": Already exists`)
+            } else {
+              errors.push(`Failed "${market.question?.substring(0, 30)}...": ${errMsg}`)
+            }
+            errorCount++
+          }
+        }
+        
+        // Show results
+        let message = `Added ${successCount} market(s) successfully.`
+        if (errorCount > 0) {
+          message += `\n\n${errorCount} market(s) failed:`
+          message += '\n' + errors.slice(0, 5).join('\n')
+          if (errors.length > 5) {
+            message += `\n... and ${errors.length - 5} more errors`
+          }
+        }
+        
+        alert(message)
+        
+        // Close modal and refresh
+        showSubMarketsModal.value = false
+        showAddModal.value = false
+        store.dispatch('markets/fetchMarkets', {})
+        
+      } catch (error) {
+        console.error('Error adding sub-markets:', error)
+        alert('Error adding markets: ' + (error.message || 'Unknown error'))
+      } finally {
+        addingMultiple.value = false
       }
     }
     
@@ -1559,7 +1974,31 @@ export default {
       bulkDeactivate,
       bulkDelete,
       resetToDefaults,
-      getCategoryBadgeClass
+      getCategoryBadgeClass,
+      getEventPrefix,
+      getQuestionWithoutPrefix,
+      // Grouped markets
+      groupedMarkets,
+      expandedGroups,
+      toggleGroup,
+      isGroupSelected,
+      toggleGroupSelection,
+      getActiveCount,
+      expandAllGroups,
+      collapseAllGroups,
+      // Sub-markets
+      hasSubMarkets,
+      subMarketsInfo,
+      showSubMarketsModal,
+      subMarketsList,
+      selectedSubMarkets,
+      loadingSubMarkets,
+      addingMultiple,
+      showAllSubMarkets,
+      toggleSubMarketSelection,
+      selectAllSubMarkets,
+      deselectAllSubMarkets,
+      addSelectedSubMarkets
     }
   }
 }
@@ -1958,6 +2397,387 @@ export default {
 .badge-cyan {
   background-color: #1abc9c;
   color: white;
+}
+
+/* Sub-markets Styles */
+.sub-markets-info {
+  margin-top: 12px;
+}
+
+/* Event Header in Sub-markets Modal */
+.event-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 12px;
+  color: white;
+}
+
+.event-icon {
+  font-size: 2.5em;
+  line-height: 1;
+}
+
+.event-info {
+  flex: 1;
+}
+
+.event-label {
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  opacity: 0.8;
+  margin-bottom: 4px;
+}
+
+.event-title-text {
+  font-size: 1.25em;
+  font-weight: 600;
+  line-height: 1.3;
+  margin-bottom: 8px;
+}
+
+.event-market-count {
+  font-size: 0.85em;
+  opacity: 0.9;
+  background: rgba(255,255,255,0.2);
+  padding: 4px 10px;
+  border-radius: 20px;
+  display: inline-block;
+}
+
+.sub-markets-alert {
+  background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+  border: 1px solid #f39c12;
+  border-radius: 8px;
+  padding: 16px;
+  color: #856404;
+}
+
+.sub-markets-alert strong {
+  display: block;
+  font-size: 1.1em;
+  margin-bottom: 8px;
+}
+
+.sub-markets-alert p {
+  margin: 4px 0;
+  font-size: 0.9em;
+}
+
+.modal-large {
+  max-width: 800px;
+  max-height: 90vh;
+}
+
+.sub-markets-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sub-markets-stats {
+  font-size: 0.95em;
+  color: var(--text-secondary);
+}
+
+.sub-markets-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.sub-markets-list {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.sub-market-item {
+  display: flex;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.sub-market-item:last-child {
+  border-bottom: none;
+}
+
+.sub-market-item:hover {
+  background-color: var(--bg-hover);
+}
+
+.sub-market-item.selected {
+  background-color: rgba(39, 174, 96, 0.1);
+  border-left: 3px solid #27ae60;
+}
+
+.sub-market-item.missing-data {
+  opacity: 0.6;
+}
+
+.sub-market-checkbox {
+  margin-right: 12px;
+  padding-top: 2px;
+}
+
+.sub-market-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.sub-market-info {
+  flex: 1;
+}
+
+.sub-market-question {
+  font-weight: 500;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.sub-market-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sub-market-details .badge {
+  font-size: 0.75em;
+  padding: 2px 8px;
+}
+
+/* Market Question Cell with Event Tag */
+.market-question-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.market-event-tag {
+  display: inline-block;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-size: 0.7em;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  max-width: fit-content;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+}
+
+.market-question-text {
+  line-height: 1.4;
+}
+
+/* Group Controls */
+.group-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.group-controls .btn {
+  font-size: 0.8em;
+}
+
+/* Grouped Markets Styles */
+.markets-grouped {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.market-group {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.market-group:last-child {
+  border-bottom: none;
+}
+
+.market-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.market-group-header:hover {
+  filter: brightness(1.1);
+}
+
+.market-group-header.expanded {
+  border-bottom: 2px solid rgba(255,255,255,0.3);
+}
+
+.market-group-header.standalone {
+  background: linear-gradient(135deg, #636e72 0%, #2d3436 100%);
+}
+
+.group-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.group-expand-icon {
+  font-size: 0.8em;
+  width: 16px;
+  text-align: center;
+  transition: transform 0.2s;
+}
+
+.group-header-left input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-event-icon {
+  font-size: 1.2em;
+}
+
+.group-event-name {
+  font-weight: 600;
+  font-size: 1em;
+}
+
+.group-header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.group-market-count {
+  font-size: 0.85em;
+  opacity: 0.9;
+}
+
+.group-active-count {
+  font-size: 0.75em;
+  background: rgba(255,255,255,0.2);
+  padding: 3px 10px;
+  border-radius: 12px;
+}
+
+.group-active-count.all-active {
+  background: rgba(39, 174, 96, 0.4);
+}
+
+.group-header-right .badge {
+  font-size: 0.7em;
+}
+
+/* Sub-markets table inside group */
+.market-group-content {
+  background: var(--bg-secondary);
+  padding: 0;
+}
+
+.sub-markets-table {
+  margin: 0;
+  border: none;
+}
+
+.sub-markets-table thead {
+  background: var(--bg-primary);
+}
+
+.sub-markets-table thead th {
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sub-market-row {
+  transition: background 0.2s;
+}
+
+.sub-market-row:hover {
+  background: var(--bg-hover);
+}
+
+.sub-market-row td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: middle;
+}
+
+.sub-market-row:last-child td {
+  border-bottom: none;
+}
+
+.sub-market-question {
+  font-weight: 500;
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+
+.sub-market-answers {
+  display: flex;
+  gap: 6px;
+}
+
+.answer-tag {
+  font-size: 0.7em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.answer-tag.yes {
+  background: #d4edda;
+  color: #155724;
+}
+
+.answer-tag.no {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+/* Markets Summary */
+.markets-summary {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  font-size: 0.85em;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.markets-summary .separator {
+  opacity: 0.5;
 }
 </style>
 

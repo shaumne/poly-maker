@@ -6,14 +6,19 @@ import pandas as pd
 from typing import List, Dict, Optional
 import os
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
 from py_clob_client.client import ClobClient
 from py_clob_client.constants import POLYGON
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 from poly_data.rate_limiter import get_rate_limiter
 
-load_dotenv()
+# Use robust env loading that handles BOM and encoding issues
+try:
+    from poly_data.env_utils import load_dotenv_safe
+    load_dotenv_safe()
+except ImportError:
+    from dotenv import load_dotenv
+    load_dotenv(encoding='utf-8-sig')
 
 # Gamma API base URL
 GAMMA_API_BASE = "https://gamma-api.polymarket.com"

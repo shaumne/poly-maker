@@ -2,6 +2,104 @@ import math
 from poly_data.data_utils import update_positions
 import poly_data.global_state as global_state
 
+
+def validate_order_book_data(market: str) -> dict:
+    """
+    Validate that order book data exists and is valid for a market.
+    
+    Args:
+        market: Market/condition ID to validate
+        
+    Returns:
+        dict with 'is_valid' bool and 'error' message if invalid
+    """
+    # Check if market exists in all_data
+    if market not in global_state.all_data:
+        return {
+            'is_valid': False,
+            'error': f'Market {market[:20]}... not found in order book data. WebSocket may not have sent data yet.'
+        }
+    
+    market_data = global_state.all_data[market]
+    
+    # Check if market_data has required fields
+    if not isinstance(market_data, dict):
+        return {
+            'is_valid': False,
+            'error': f'Market data for {market[:20]}... is not a valid dictionary'
+        }
+    
+    if 'bids' not in market_data or 'asks' not in market_data:
+        return {
+            'is_valid': False,
+            'error': f'Market {market[:20]}... missing bids or asks data'
+        }
+    
+    # Check if there are any bids and asks
+    if len(market_data['bids']) == 0 and len(market_data['asks']) == 0:
+        return {
+            'is_valid': False,
+            'error': f'Market {market[:20]}... has empty order book (no bids or asks)'
+        }
+    
+    return {'is_valid': True, 'error': None}
+
+
+def validate_price_sanity(best_bid: float, best_ask: float, token_name: str = '') -> dict:
+    """
+    Validate that prices are within expected bounds for prediction markets.
+    
+    Args:
+        best_bid: Best bid price
+        best_ask: Best ask price
+        token_name: Name of token for error messages
+        
+    Returns:
+        dict with 'is_valid' bool and 'warning' message if any issues
+    """
+    warnings = []
+    
+    # Check for None values
+    if best_bid is None or best_ask is None:
+        return {
+            'is_valid': False,
+            'error': f'best_bid or best_ask is None for {token_name}'
+        }
+    
+    # Check price bounds (prediction markets are 0-1)
+    if best_bid < 0 or best_bid > 1:
+        return {
+            'is_valid': False,
+            'error': f'best_bid {best_bid} is outside valid range (0-1) for {token_name}'
+        }
+    
+    if best_ask < 0 or best_ask > 1:
+        return {
+            'is_valid': False,
+            'error': f'best_ask {best_ask} is outside valid range (0-1) for {token_name}'
+        }
+    
+    # Check that bid < ask (normal market condition)
+    if best_bid >= best_ask:
+        warnings.append(f'Inverted market: bid ({best_bid}) >= ask ({best_ask}) for {token_name}')
+    
+    # Check for extremely wide spreads (more than 50%)
+    spread = best_ask - best_bid
+    if spread > 0.5:
+        warnings.append(f'Very wide spread ({spread:.2%}) for {token_name}')
+    
+    # Check for extreme prices that might indicate stale data
+    if best_bid < 0.001:
+        warnings.append(f'Extremely low bid ({best_bid}) for {token_name} - may be stale data')
+    
+    if best_ask > 0.999:
+        warnings.append(f'Extremely high ask ({best_ask}) for {token_name} - may be stale data')
+    
+    return {
+        'is_valid': True,
+        'warnings': warnings if warnings else None
+    }
+
 # def get_avgPrice(position, assetId):
 #     curr_global = global_state.all_positions[global_state.all_positions['asset'] == str(assetId)]
 #     api_position_size = 0
@@ -26,6 +124,37 @@ import poly_data.global_state as global_state
 #     return api_avgPrice
 
 def get_best_bid_ask_deets(market, name, size, deviation_threshold=0.05):
+    """
+    Get best bid/ask details from order book for a market.
+    
+    Args:
+        market: Market/condition ID
+        name: Token name ('token1' or 'token2')
+        size: Minimum size to consider for best price
+        deviation_threshold: Threshold for calculating liquidity within range
+        
+    Returns:
+        Dictionary with order book details or None values if data unavailable
+    """
+    # Validate order book data exists
+    validation = validate_order_book_data(market)
+    if not validation['is_valid']:
+        print(f"⚠️  {validation['error']}")
+        # Return dict with all None values
+        return {
+            'best_bid': None,
+            'best_bid_size': None,
+            'second_best_bid': None,
+            'second_best_bid_size': None,
+            'top_bid': None,
+            'best_ask': None,
+            'best_ask_size': None,
+            'second_best_ask': None,
+            'second_best_ask_size': None,
+            'top_ask': None,
+            'bid_sum_within_n_percent': 0,
+            'ask_sum_within_n_percent': 0
+        }
 
     best_bid, best_bid_size, second_best_bid, second_best_bid_size, top_bid = find_best_price_with_size(global_state.all_data[market]['bids'], size, reverse=True)
     best_ask, best_ask_size, second_best_ask, second_best_ask_size, top_ask = find_best_price_with_size(global_state.all_data[market]['asks'], size, reverse=False)

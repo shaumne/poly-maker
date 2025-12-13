@@ -51,6 +51,10 @@ export default {
     return client.get(`/markets/slug/${slug}`)
   },
   
+  fetchAllMarketsBySlug(slug) {
+    return client.get(`/markets/slug/${slug}/all`)
+  },
+  
   createMarket(data) {
     return client.post('/markets', data)
   },

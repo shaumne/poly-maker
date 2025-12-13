@@ -1,4 +1,3 @@
-from dotenv import load_dotenv          # Environment variable management
 import os                           # Operating system interface
 import sys                          # System-specific parameters and functions
 import logging                      # Structured logging
@@ -6,6 +5,19 @@ from typing import Dict, Optional, Tuple, Any, List  # Type hints
 
 # Set up logger
 logger = logging.getLogger(__name__)
+
+# Use our robust env loading utility that handles BOM and encoding issues on Windows
+try:
+    from poly_data.env_utils import load_dotenv_safe, validate_env_variables
+    env_loaded = load_dotenv_safe()
+    if not env_loaded:
+        logger.warning("Could not load .env file using safe loader, trying fallback...")
+        from dotenv import load_dotenv
+        load_dotenv(encoding='utf-8-sig')
+except ImportError:
+    # Fallback to standard dotenv with utf-8-sig encoding (handles BOM)
+    from dotenv import load_dotenv
+    load_dotenv(encoding='utf-8-sig')
 
 # Polymarket API client libraries
 from py_clob_client.client import ClobClient
@@ -26,9 +38,6 @@ from py_clob_client.clob_types import OpenOrderParams
 
 # Smart contract ABIs
 from poly_data.abis import NegRiskAdapterABI, ConditionalTokenABI, erc20_abi
-
-# Load environment variables
-load_dotenv()
 
 # Import API constants
 from poly_data.api_constants import ERROR_CODE_DESCRIPTIONS
@@ -567,7 +576,13 @@ class PolymarketClient:
         Returns:
             tuple: (bids_df, asks_df) - DataFrames containing bid and ask orders
         """
+        # Apply rate limiting for CLOB /book endpoint (200 requests / 10s)
+        rate_limiter = get_rate_limiter()
+        rate_limiter.wait_if_needed_sync('clob_book')
+        
         orderBook = self.client.get_order_book(market)
+        rate_limiter.record_request('clob_book')
+        
         return pd.DataFrame(orderBook.bids).astype(float), pd.DataFrame(orderBook.asks).astype(float)
 
 
@@ -588,7 +603,13 @@ class PolymarketClient:
             float: Total position value in USDC
         """
         try:
+            # Apply rate limiting for Data API (200 requests / 10s)
+            rate_limiter = get_rate_limiter()
+            rate_limiter.wait_if_needed_sync('data_api_general')
+            
             res = requests.get(f'https://data-api.polymarket.com/value?user={self.browser_wallet}')
+            rate_limiter.record_request('data_api_general')
+            
             data = res.json()
             
             # Handle different response formats
@@ -626,7 +647,13 @@ class PolymarketClient:
         Returns:
             DataFrame: All positions with details like market, size, avgPrice
         """
+        # Apply rate limiting for Data API (200 requests / 10s)
+        rate_limiter = get_rate_limiter()
+        rate_limiter.wait_if_needed_sync('data_api_general')
+        
         res = requests.get(f'https://data-api.polymarket.com/positions?user={self.browser_wallet}')
+        rate_limiter.record_request('data_api_general')
+        
         return pd.DataFrame(res.json())
     
     def get_raw_position(self, tokenId: str) -> int:
@@ -668,7 +695,12 @@ class PolymarketClient:
         Returns:
             DataFrame: All open orders with their details
         """
+        # Apply rate limiting for CLOB Ledger /orders endpoint (300 requests / 10s)
+        rate_limiter = get_rate_limiter()
+        rate_limiter.wait_if_needed_sync('clob_ledger')
+        
         orders_df = pd.DataFrame(self.client.get_orders())
+        rate_limiter.record_request('clob_ledger')
 
         # Convert numeric columns to float
         for col in ['original_size', 'size_matched', 'price']:
@@ -687,9 +719,14 @@ class PolymarketClient:
         Returns:
             DataFrame: Open orders for the specified market
         """
+        # Apply rate limiting for CLOB Ledger /orders endpoint (300 requests / 10s)
+        rate_limiter = get_rate_limiter()
+        rate_limiter.wait_if_needed_sync('clob_ledger')
+        
         orders_df = pd.DataFrame(self.client.get_orders(OpenOrderParams(
             market=market,
         )))
+        rate_limiter.record_request('clob_ledger')
 
         # Convert numeric columns to float
         for col in ['original_size', 'size_matched', 'price']:

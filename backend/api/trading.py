@@ -88,6 +88,30 @@ async def restart_trading(background_tasks: BackgroundTasks, db: Session = Depen
     # Start again
     return await start_trading(background_tasks, db)
 
+
+@router.post("/reset-closed-only-mode")
+async def reset_closed_only_mode():
+    """
+    Reset the 'closed only mode' flag.
+    
+    Use this when your Polymarket account restriction has been lifted
+    but the bot is still skipping orders due to the cached flag.
+    """
+    try:
+        import poly_data.global_state as global_state
+        
+        was_in_closed_mode = global_state.account_in_closed_only_mode
+        global_state.account_in_closed_only_mode = False
+        
+        return {
+            "message": "Closed only mode flag has been reset",
+            "previous_state": was_in_closed_mode,
+            "current_state": False,
+            "note": "The bot will now attempt to place orders again. If your account is still restricted, the flag will be set again automatically."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reset flag: {str(e)}")
+
 @router.get("/test-info")
 async def get_test_info():
     """Get information about testing the trading bot"""
