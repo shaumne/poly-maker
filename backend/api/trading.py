@@ -172,8 +172,8 @@ async def get_test_info():
 @router.get("/diagnostics")
 async def get_trading_diagnostics(db: Session = Depends(get_db)):
     """Get diagnostic information about why orders might not be created"""
-    from database import Market
-    import poly_data.global_state as global_state
+    import asyncio
+    from concurrent.futures import TimeoutError
     
     diagnostics = {
         "bot_status": {},
@@ -182,106 +182,120 @@ async def get_trading_diagnostics(db: Session = Depends(get_db)):
         "recommendations": []
     }
     
-    # Check bot status
-    status = db.query(TradingStatus).first()
-    diagnostics["bot_status"] = {
-        "is_running": status.is_running if status else False,
-        "started_at": str(status.started_at) if status and status.started_at else None,
-        "message": "✅ Bot is running" if (status and status.is_running) else "❌ Bot is NOT running - click Start Trading"
-    }
-    
-    if not status or not status.is_running:
-        diagnostics["recommendations"].append("Bot is not running. Go to Dashboard and click 'Start Trading'")
-        return diagnostics
-    
-    # Check markets
     try:
-        markets = db.query(Market).filter(Market.is_active == True).all()
-        active_markets = [m for m in markets if m.trading_params]
-        
-        # Check if global_state.df exists and is not None
-        loaded_in_memory = 0
-        if hasattr(global_state, 'df') and global_state.df is not None:
+        # Wrap the entire diagnostic check in a timeout
+        async def run_diagnostics():
+            from database import Market
+            import poly_data.global_state as global_state
+            
+            # Check bot status (fast)
             try:
-                loaded_in_memory = len(global_state.df) if not global_state.df.empty else 0
-            except:
-                loaded_in_memory = 0
-        
-        diagnostics["markets"] = {
-            "total_active": len(active_markets),
-            "markets_with_params": len([m for m in markets if m.trading_params]),
-            "markets_without_params": len([m for m in markets if not m.trading_params]),
-            "loaded_in_memory": loaded_in_memory,
-            "message": f"✅ {len(active_markets)} active markets with trading params" if active_markets else "❌ No active markets with trading params"
-        }
-        
-        if not active_markets:
-            diagnostics["recommendations"].append("No active markets found. Go to Markets page, configure markets, and ensure is_active = true")
-        
-        if not hasattr(global_state, 'df') or global_state.df is None or (hasattr(global_state.df, 'empty') and global_state.df.empty):
-            diagnostics["recommendations"].append("Markets not loaded in memory. Bot may need to be restarted.")
-        
-    except Exception as e:
-        diagnostics["markets"] = {
-            "error": str(e),
-            "total_active": 0,
-            "markets_with_params": 0,
-            "markets_without_params": 0,
-            "loaded_in_memory": 0,
-            "message": f"❌ Error checking markets: {str(e)}"
-        }
-    
-    # Check websocket/tokens
-    try:
-        tokens_count = len(global_state.all_tokens) if hasattr(global_state, 'all_tokens') else 0
-        client_initialized = hasattr(global_state, 'client') and global_state.client is not None
-        
-        # Get sample token info if available
-        sample_tokens = []
-        if hasattr(global_state, 'all_tokens') and global_state.all_tokens:
-            sample_tokens = global_state.all_tokens[:3]  # First 3 tokens
-        
-        diagnostics["websocket"] = {
-            "tokens_to_subscribe": tokens_count,
-            "client_initialized": client_initialized,
-            "sample_tokens": sample_tokens,
-            "message": f"✅ {tokens_count} tokens ready for subscription" if tokens_count > 0 else "❌ No tokens to subscribe to"
-        }
-        
-        if tokens_count == 0:
-            diagnostics["recommendations"].append("No tokens found. Markets may not have token1/token2 set properly.")
-            # Check if we can get market token info from database
-            try:
-                from database import Market
-                sample_market = db.query(Market).filter(Market.is_active == True).first()
-                if sample_market:
-                    diagnostics["websocket"]["sample_market_tokens"] = {
-                        "question": sample_market.question,
-                        "token1": sample_market.token1 if sample_market.token1 else "MISSING",
-                        "token2": sample_market.token2 if sample_market.token2 else "MISSING"
-                    }
-                    if not sample_market.token1 or not sample_market.token2:
-                        diagnostics["recommendations"].append(f"Sample market '{sample_market.question}' has missing tokens. Please re-fetch or update the market.")
+                status = db.query(TradingStatus).first()
+                diagnostics["bot_status"] = {
+                    "is_running": status.is_running if status else False,
+                    "started_at": str(status.started_at) if status and status.started_at else None,
+                    "message": "✅ Bot is running" if (status and status.is_running) else "❌ Bot is NOT running - click Start Trading"
+                }
+                
+                if not status or not status.is_running:
+                    diagnostics["recommendations"].append("Bot is not running. Go to Dashboard and click 'Start Trading'")
+                    return diagnostics
             except Exception as e:
-                pass
+                diagnostics["bot_status"] = {"error": str(e), "is_running": False}
+            
+            # Check markets (optimized query)
+            try:
+                # Direct count queries - simpler and more reliable
+                total_active = db.query(Market).filter(Market.is_active == True).count()
+                
+                # Count markets that have trading_params relationship
+                markets_with_params = db.query(Market).join(
+                    Market.trading_params
+                ).filter(Market.is_active == True).count()
+                
+                # Quick check of global state
+                loaded_in_memory = 0
+                try:
+                    if hasattr(global_state, 'df') and global_state.df is not None and hasattr(global_state.df, '__len__'):
+                        loaded_in_memory = len(global_state.df) if not global_state.df.empty else 0
+                except:
+                    pass
+                
+                diagnostics["markets"] = {
+                    "total_active": total_active,
+                    "markets_with_params": markets_with_params,
+                    "loaded_in_memory": loaded_in_memory,
+                    "message": f"✅ {markets_with_params} active markets with trading params" if markets_with_params > 0 else "❌ No active markets with trading params"
+                }
+                
+                if markets_with_params == 0:
+                    diagnostics["recommendations"].append("No active markets found. Go to Markets page, configure markets, and ensure is_active = true")
+                
+                if loaded_in_memory == 0:
+                    diagnostics["recommendations"].append("Markets not loaded in memory. Bot may need to be restarted.")
+                
+            except Exception as e:
+                diagnostics["markets"] = {
+                    "error": str(e),
+                    "total_active": 0,
+                    "markets_with_params": 0,
+                    "loaded_in_memory": 0,
+                    "message": f"❌ Error checking markets: {str(e)}"
+                }
+            
+            # Check websocket/tokens (fast)
+            try:
+                import poly_data.global_state as global_state
+                tokens_count = len(global_state.all_tokens) if hasattr(global_state, 'all_tokens') and global_state.all_tokens else 0
+                client_initialized = hasattr(global_state, 'client') and global_state.client is not None
+                
+                diagnostics["websocket"] = {
+                    "tokens_to_subscribe": tokens_count,
+                    "client_initialized": client_initialized,
+                    "message": f"✅ {tokens_count} tokens ready for subscription" if tokens_count > 0 else "❌ No tokens to subscribe to"
+                }
+                
+                if tokens_count == 0:
+                    diagnostics["recommendations"].append("No tokens found. Markets may not have token1/token2 set properly.")
+                
+            except Exception as e:
+                diagnostics["websocket"] = {
+                    "error": str(e),
+                    "tokens_to_subscribe": 0,
+                    "client_initialized": False,
+                    "message": f"❌ Error checking websocket: {str(e)}"
+                }
+            
+            # Final recommendations
+            total_active = diagnostics["markets"].get("markets_with_params", 0)
+            if diagnostics["bot_status"].get("is_running") and total_active > 0:
+                diagnostics["recommendations"].append("✅ Bot is running and markets are active. Check backend logs for trading activity.")
+            
+            return diagnostics
         
-    except Exception as e:
-        diagnostics["websocket"] = {
-            "error": str(e),
-            "tokens_to_subscribe": 0,
-            "client_initialized": False,
-            "message": f"❌ Error checking websocket: {str(e)}"
+        # Run with 5 second timeout
+        result = await asyncio.wait_for(run_diagnostics(), timeout=5.0)
+        return result
+        
+    except asyncio.TimeoutError:
+        return {
+            "error": "Diagnostics check timed out",
+            "bot_status": {"message": "Unable to check - operation timed out"},
+            "markets": {"message": "Unable to check - operation timed out"},
+            "websocket": {"message": "Unable to check - operation timed out"},
+            "recommendations": [
+                "Diagnostics check timed out after 5 seconds",
+                "This may indicate a database lock or slow query",
+                "Try restarting the backend server",
+                "Check backend logs for errors"
+            ]
         }
-    
-    # Check for common issues
-    total_active = diagnostics["markets"].get("total_active", 0)
-    if diagnostics["bot_status"]["is_running"] and total_active > 0:
-        diagnostics["recommendations"].append("✅ Bot is running and markets are active. Check backend logs for:")
-        diagnostics["recommendations"].append("   - '📊 Received book update' messages (websocket working)")
-        diagnostics["recommendations"].append("   - '🔄 Triggering perform_trade' messages (trading triggered)")
-        diagnostics["recommendations"].append("   - '🔍 Processing trade' messages (trade function called)")
-        diagnostics["recommendations"].append("   - '[DRY RUN] Would create' messages (orders would be sent)")
-        diagnostics["recommendations"].append("If you don't see these, websocket may not be receiving data yet.")
-    
-    return diagnostics
+    except Exception as e:
+        return {
+            "error": str(e),
+            "bot_status": {},
+            "markets": {},
+            "websocket": {},
+            "recommendations": [f"Error running diagnostics: {str(e)}"]
+        }
 

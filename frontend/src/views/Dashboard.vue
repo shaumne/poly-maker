@@ -31,6 +31,26 @@
 
     <!-- Stats Grid -->
     <div class="stats-grid">
+      <div class="stat-card highlight-card">
+        <div class="stat-label">💰 USDC Balance</div>
+        <div class="stat-value" :class="stats?.usdc_balance !== null && stats?.usdc_balance !== undefined ? '' : 'text-muted'">
+          ${{ stats?.usdc_balance?.toFixed(2) ?? 'N/A' }}
+        </div>
+        <div class="stat-change text-muted">
+          Available for trading
+        </div>
+      </div>
+
+      <div class="stat-card highlight-card">
+        <div class="stat-label">📊 Total Balance</div>
+        <div class="stat-value" :class="stats?.total_balance !== null && stats?.total_balance !== undefined ? '' : 'text-muted'">
+          ${{ stats?.total_balance?.toFixed(2) ?? 'N/A' }}
+        </div>
+        <div class="stat-change text-muted">
+          USDC + Positions
+        </div>
+      </div>
+
       <div class="stat-card">
         <div class="stat-label">Positions Value</div>
         <div class="stat-value" :class="stats?.positions_value !== null && stats?.positions_value !== undefined ? '' : 'text-muted'">
@@ -316,18 +336,19 @@ export default {
       store.dispatch('orders/fetchOrders', { limit: 10 })
       store.dispatch('positions/fetchPositions')
       fetchTokenBalances()
-      loadDiagnostics() // Load diagnostics on mount
+      // Don't load diagnostics on mount - only when user clicks button
       
-      // Auto-refresh every 10 seconds
+      // Auto-refresh every 15 seconds (increased from 10s to reduce server load)
       setInterval(() => {
         store.dispatch('stats/fetchStats')
         store.dispatch('orders/fetchOrders', { limit: 10 })
         store.dispatch('positions/fetchPositions')
         fetchTokenBalances()
+        // Only refresh diagnostics if panel is open (manual check)
         if (showDiagnostics.value) {
           loadDiagnostics()
         }
-      }, 10000)
+      }, 15000)  // Increased to 15s for better performance
     })
     
       return {
@@ -400,6 +421,22 @@ export default {
 
 .diagnostic-section li {
   margin: 0.25rem 0;
+}
+
+.highlight-card {
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+  border: 2px solid var(--primary);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.highlight-card .stat-label {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.highlight-card .stat-value {
+  font-size: 2rem;
+  font-weight: 700;
 }
 </style>
 

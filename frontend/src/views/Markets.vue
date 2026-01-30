@@ -415,6 +415,7 @@
                 <option value="MARKET_MAKING">Market Making</option>
                 <option value="POSITION_BUILDING">Position Building</option>
                 <option value="HYBRID">Hybrid</option>
+                <option value="SELL_ONLY">Sell Only (Exit)</option>
               </select>
               <div v-if="expandedInfo === 'trading_mode'" class="info-box">
                 <p><strong>Description:</strong> This is one of the most important parameters as it defines the core trading strategy the bot will employ for this specific market. The trading mode determines how the bot interacts with the market, what types of orders it places, and how it manages positions.</p>
@@ -423,6 +424,7 @@
                   <li><strong>Market Making:</strong> The bot acts as a liquidity provider by simultaneously placing both buy and sell orders around the current market price. It profits from the bid-ask spread - buying at slightly lower prices and selling at slightly higher prices. This strategy works best in stable, liquid markets where prices don't move too dramatically. The bot continuously adjusts its orders to stay near the market price, capturing small but frequent profits. This is a lower-risk, lower-return strategy that works well in markets with high trading volume and tight spreads. The bot will maintain a relatively neutral position, profiting from the spread rather than directional moves.</li>
                   <li><strong>Position Building:</strong> The bot accumulates a position in one direction (YES or NO) over time, gradually building up to a target position size. This is used when you have a directional view on the market outcome. The bot will place buy orders strategically to build the position while trying to get good entry prices. Once the target position is reached, the bot may hold it until profit targets are met or stop losses are triggered. This strategy is higher risk but can offer higher returns if your directional view is correct. It's best for markets where you have strong conviction about the outcome.</li>
                   <li><strong>Hybrid:</strong> This mode combines both strategies - the bot makes markets (provides liquidity) while simultaneously building a directional position. It places market-making orders to capture spread profits, but with a bias toward one side to gradually build a position. This allows you to profit from both the spread and directional moves. It's more complex but can be very effective in markets where you have a moderate directional view but still want to capture spread profits. The bot balances between making markets and building position, adjusting based on market conditions.</li>
+                  <li><strong>Sell Only (Exit):</strong> In this mode, the bot will ONLY place sell orders to exit existing positions. No new buy orders will be placed. This is used for de-risking when you want to exit a market completely or reduce your position size. The bot will place sell orders at favorable prices to gradually exit the position. This mode is useful when market conditions change, you need to free up capital, or you've reached your profit target and want to close out positions systematically. It's a risk-reduction strategy that allows controlled exit rather than panic selling.</li>
                 </ul>
                 <p><strong>Recommended:</strong> Start with Market Making for most scenarios as it's the most stable and lower-risk approach. Use Position Building when you have strong directional conviction and are willing to take on more risk for potentially higher returns. Hybrid mode is for advanced users who want to combine both approaches.</p>
                 <p><strong>Default:</strong> MARKET_MAKING</p>
@@ -432,7 +434,7 @@
               </div>
             </div>
 
-            <div v-if="editForm.trading_mode !== 'MARKET_MAKING'" class="form-group">
+            <div v-if="editForm.trading_mode === 'POSITION_BUILDING' || editForm.trading_mode === 'HYBRID'" class="form-group">
               <label class="form-label">
                 Target Position
                 <span class="info-icon" @click="toggleInfo('target_position')" title="Click for more info">ℹ️</span>

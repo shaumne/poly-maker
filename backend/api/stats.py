@@ -33,8 +33,10 @@ async def get_stats(db: Session = Depends(get_db)):
     total_orders = db.query(Order).count()
     active_orders = db.query(Order).filter(Order.status == 'PENDING').count()
     
-    # Fetch positions value from Polymarket (skip USDC balance)
+    # Fetch wallet balances from Polymarket
     positions_value = None
+    usdc_balance = None
+    total_balance = None
     
     try:
         import os
@@ -53,13 +55,15 @@ async def get_stats(db: Session = Depends(get_db)):
         else:
             from poly_data.polymarket_client import PolymarketClient
             client = PolymarketClient()
-            # Only fetch positions value, not USDC balance
+            # Fetch both USDC and positions balance
+            usdc_balance = round(client.get_usdc_balance(), 2)
             positions_value = round(client.get_pos_balance(), 2)
+            total_balance = round(usdc_balance + positions_value, 2)
     except Exception as e:
         error_msg = str(e)
         # Only log if it's not a configuration issue
         if "hex string" not in error_msg.lower() and "your_actual" not in error_msg.lower():
-            print(f"Warning: Failed to fetch positions balance: {error_msg}")
+            print(f"Warning: Failed to fetch wallet balance: {error_msg}")
         # Continue without balance info if it fails
     
     return StatsResponse(
@@ -70,8 +74,8 @@ async def get_stats(db: Session = Depends(get_db)):
         today_pnl=round(today_pnl, 2),
         total_orders=total_orders,
         active_orders=active_orders,
-        usdc_balance=None,  # Don't show USDC balance
-        total_balance=positions_value,  # Show only positions value as total
+        usdc_balance=usdc_balance,
+        total_balance=total_balance,
         positions_value=positions_value
     )
 

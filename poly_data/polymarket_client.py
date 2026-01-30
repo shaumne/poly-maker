@@ -134,10 +134,10 @@ class PolymarketClient:
 
         # Initialize the Polymarket API client
         # According to docs: signature_type=2 for Browser Wallet (Metamask, Coinbase Wallet, etc)
-        # signature_type=1 for Email/Magic account
-        # signature_type=0 or None for EOA (direct trading)
-        # We use signature_type=2 (Browser Wallet) as default
-        self.signature_type = 2  # Browser Wallet - store as instance variable for use in error messages
+        # signature_type=1 for Email/Magic account (POLY_PROXY)
+        # signature_type=0 for EOA (direct trading with private key)
+        # User logs in with Email/Google (Magic Link) -> signature_type=1
+        self.signature_type = 1  # POLY_PROXY - Magic Link / Email login
         
         logger.info(f"Initializing ClobClient with signature_type={self.signature_type} (Browser Wallet)")
         logger.info(f"Funder address: {self.browser_wallet[:10]}...{self.browser_wallet[-8:]}")

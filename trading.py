@@ -5,9 +5,13 @@ import asyncio                  # Asynchronous I/O
 import traceback                # Exception handling
 import pandas as pd             # Data analysis library
 import math                     # Mathematical functions
+import time                     # Time tracking for throttling
 
 import poly_data.global_state as global_state
 import poly_data.CONSTANTS as CONSTANTS
+
+# Track last order time for throttling (per token)
+last_order_time = {}
 
 # Import config for DRY_RUN mode
 try:
@@ -35,13 +39,26 @@ def send_buy_order(order):
     Create a BUY order for a specific token.
     
     This function:
-    1. Cancels any existing orders for the token
-    2. Checks if the order price is within acceptable range
-    3. Creates a new buy order if conditions are met
+    1. Checks throttling (minimum 3 seconds between orders)
+    2. Cancels any existing orders if needed
+    3. Checks if the order price is within acceptable range
+    4. Creates a new buy order if conditions are met
     
     Args:
         order (dict): Order details including token, price, size, and market parameters
     """
+    # THROTTLING: Minimum 3 seconds between orders for same token
+    token = order['token']
+    current_time = time.time()
+    min_order_interval = 3.0  # seconds
+    
+    if token in last_order_time:
+        time_since_last_order = current_time - last_order_time[token]
+        if time_since_last_order < min_order_interval:
+            cooldown_remaining = min_order_interval - time_since_last_order
+            print(f"⏱️  Throttling: {cooldown_remaining:.1f}s cooldown remaining for this token")
+            return
+    
     client = global_state.client
 
     # Only cancel existing orders if we need to make significant changes
@@ -82,6 +99,15 @@ def send_buy_order(order):
             print("⏸️  Skipping buy order - account is in closed only mode")
             return
         
+        # Bakiye kontrolü: BUY için gerekli USDC = order size (USDC cinsinden)
+        try:
+            usdc = client.get_usdc_balance()
+            if usdc < order['size']:
+                print(f"⏸️  Skipping buy - insufficient USDC: have ${usdc:.2f}, need ${order['size']:.2f}")
+                return
+        except Exception as e:
+            print(f"⚠️  Balance check failed: {e}. Proceeding with order (risk of API reject).")
+        
         # Only place orders with prices between 0.01 and 0.99 to avoid extreme positions
         # (0.01-0.99 range allows trading on both sides of prediction markets)
         if order['price'] >= 0.01 and order['price'] <= 0.99:
@@ -99,6 +125,9 @@ def send_buy_order(order):
                 neg_risk=None  # Auto-detect from market
             )
             
+            # Update last order time for throttling
+            last_order_time[token] = time.time()
+            
             # Check if order creation failed due to validation
             if result.get('validation_error'):
                 print(f"⚠️  Order validation failed: {result.get('error', 'Unknown error')}")
@@ -114,12 +143,25 @@ def send_sell_order(order):
     Create a SELL order for a specific token.
     
     This function:
-    1. Cancels any existing orders for the token
-    2. Creates a new sell order with the specified parameters
+    1. Checks throttling (minimum 3 seconds between orders)
+    2. Cancels any existing orders if needed
+    3. Creates a new sell order with the specified parameters
     
     Args:
         order (dict): Order details including token, price, size, and market parameters
     """
+    # THROTTLING: Minimum 3 seconds between orders for same token
+    token = order['token']
+    current_time = time.time()
+    min_order_interval = 3.0  # seconds
+    
+    if token in last_order_time:
+        time_since_last_order = current_time - last_order_time[token]
+        if time_since_last_order < min_order_interval:
+            cooldown_remaining = min_order_interval - time_since_last_order
+            print(f"⏱️  Throttling: {cooldown_remaining:.1f}s cooldown remaining for this token")
+            return
+    
     client = global_state.client
 
     # Only cancel existing orders if we need to make significant changes
@@ -156,6 +198,9 @@ def send_sell_order(order):
         order['size'], 
         neg_risk=None  # Auto-detect from market
     )
+    
+    # Update last order time for throttling
+    last_order_time[token] = time.time()
     
     # Check if order creation failed due to validation
     if result.get('validation_error'):
@@ -293,6 +338,17 @@ async def perform_trade(market):
             
             print(f"Trading mode: {side_to_trade} - Trading {len(deets)} side(s)")
             
+            # ------- USDC BALANCE CHECK (prevents over-spending) -------
+            try:
+                usdc_balance = client.get_usdc_balance()
+                available_usdc = max(0.0, float(usdc_balance))
+                reserved_usdc = 0.0  # Reserve as we plan buys in this loop
+                print(f"💰 USDC balance: ${available_usdc:.2f}")
+            except Exception as e:
+                print(f"⚠️  Could not fetch USDC balance: {e}. Skipping buy orders this round.")
+                available_usdc = 0.0
+                reserved_usdc = 0.0
+            
             # ------- TRADING LOGIC FOR EACH OUTCOME -------
             # Loop through selected outcomes
             for detail in deets:
@@ -429,89 +485,170 @@ async def perform_trade(market):
                 # File to store risk management information for this market
                 fname = 'positions/' + str(market) + '.json'
 
-                # ------- SELL ORDER LOGIC -------
-                if sell_amount > 0:
-                    # Skip if we have no average price (no real position)
-                    if avgPrice == 0:
-                        print("Avg Price is 0. Skipping")
-                        continue
-
-                    order['size'] = sell_amount
-                    order['price'] = ask_price
-
-                    # Get fresh market data for risk assessment
-                    n_deets = get_best_bid_ask_deets(market, detail['name'], 100, 0.1)
+                # ======== TRADING MODE LOGIC ========
+                # Determine trading behavior based on trading_mode
+                trading_mode = row.get('trading_mode', 'MARKET_MAKING')
+                target_position = row.get('target_position', 0.0)
+                
+                print(f"🎯 Trading Mode: {trading_mode}, Target Position: {target_position}, Current Position: {position}")
+                
+                # Flags to control buy/sell behavior
+                allow_buy = False
+                allow_sell = False
+                
+                if trading_mode == 'MARKET_MAKING':
+                    # Default mode: Both buy and sell for market making
+                    allow_buy = True
+                    allow_sell = True
+                    print("📊 MARKET_MAKING mode: Allowing both buy and sell orders")
                     
-                    # Calculate current market price and spread
-                    mid_price = round_up((n_deets['best_bid'] + n_deets['best_ask']) / 2, round_length)
-                    spread = round(n_deets['best_ask'] - n_deets['best_bid'], 2)
-
-                    # Calculate current profit/loss on position
-                    # Side-specific PnL calculation
-                    side_to_trade = row.get('side_to_trade', 'BOTH')
-                    
-                    # Only calculate PnL for the side we're actually trading
-                    should_calculate_pnl = (
-                        side_to_trade == 'BOTH' or
-                        (side_to_trade == 'YES' and detail['name'] == 'token1') or
-                        (side_to_trade == 'NO' and detail['name'] == 'token2')
-                    )
-                    
-                    if should_calculate_pnl and avgPrice > 0:
-                        pnl = (mid_price - avgPrice) / avgPrice * 100
+                elif trading_mode == 'POSITION_BUILDING':
+                    # Only buy until target position is reached
+                    if position < target_position:
+                        allow_buy = True
+                        allow_sell = False
+                        print(f"📈 POSITION_BUILDING mode: Only buying (current: {position}, target: {target_position})")
                     else:
-                        pnl = 0
-                        if not should_calculate_pnl:
-                            print(f"Skipping PnL calculation - not trading this side (side_to_trade={side_to_trade}, token={detail['name']})")
-
-                    print(f"Mid Price: {mid_price}, Spread: {spread}, PnL: {pnl}")
+                        # Target reached - can now sell to take profits but don't buy more
+                        allow_buy = False
+                        allow_sell = True
+                        print(f"✅ POSITION_BUILDING mode: Target reached! Now allowing sells only")
+                        
+                elif trading_mode == 'SELL_ONLY':
+                    # Only sell to exit positions
+                    allow_buy = False
+                    allow_sell = True
+                    print("📉 SELL_ONLY mode: Only selling to exit positions")
                     
-                    # Prepare risk details for tracking
-                    risk_details = {
-                        'time': str(pd.Timestamp.utcnow().tz_localize(None)),
-                        'question': row['question']
-                    }
+                elif trading_mode == 'HYBRID':
+                    # Build position first, then market make
+                    # Define "close to target" as within 20% of target
+                    position_threshold = target_position * 0.8
+                    
+                    if position < position_threshold:
+                        # Far from target: Position building (buy only)
+                        allow_buy = True
+                        allow_sell = False
+                        print(f"🔨 HYBRID mode - Building: Only buying (current: {position}, threshold: {position_threshold:.1f}, target: {target_position})")
+                    else:
+                        # Close to or at target: Market making (buy and sell)
+                        allow_buy = True
+                        allow_sell = True
+                        print(f"⚡ HYBRID mode - Market Making: Both buy and sell (position: {position} >= threshold: {position_threshold:.1f})")
+                else:
+                    # Unknown mode - default to market making
+                    print(f"⚠️  Unknown trading mode '{trading_mode}', defaulting to MARKET_MAKING")
+                    allow_buy = True
+                    allow_sell = True
 
-                    try:
-                        ratio = (n_deets['bid_sum_within_n_percent']) / (n_deets['ask_sum_within_n_percent'])
-                    except:
-                        ratio = 0
+                # ------- SELL ORDER LOGIC -------
+                # Check if sell orders are allowed by trading mode
+                if sell_amount > 0:
+                    if not allow_sell:
+                        print(f"⏸️  Skipping sell order - {trading_mode} mode does not allow selling at this time")
+                        # Continue to buy logic (don't skip the entire iteration)
+                    else:
+                        # MARKET MAKING FIX: Place sell orders even with avgPrice=0
+                        # This ensures we always have both buy and sell orders in the market
+                        # Only skip PnL calculation if avgPrice is 0
+                        # Sell logic is allowed - proceed with sell order
+                        order['size'] = sell_amount
+                        order['price'] = ask_price
 
-                    pos_to_sell = sell_amount  # Amount to sell in risk-off scenario
+                        # Get fresh market data for risk assessment
+                        n_deets = get_best_bid_ask_deets(market, detail['name'], 100, 0.1)
+                        
+                        # Calculate current market price and spread
+                        mid_price = round_up((n_deets['best_bid'] + n_deets['best_ask']) / 2, round_length)
+                        spread = round(n_deets['best_ask'] - n_deets['best_bid'], 2)
 
-                    # ------- STOP-LOSS LOGIC -------
-                    # Trigger stop-loss if either:
-                    # 1. PnL is below threshold and spread is tight enough to exit
-                    # 2. Volatility is too high
-                    if (pnl < params['stop_loss_threshold'] and spread <= params['spread_threshold']) or row['3_hour'] > params['volatility_threshold']:
-                        risk_details['msg'] = (f"Selling {pos_to_sell} because spread is {spread} and pnl is {pnl} "
-                                              f"and ratio is {ratio} and 3 hour volatility is {row['3_hour']}")
-                        print("Stop loss Triggered: ", risk_details['msg'])
+                        # Calculate current profit/loss on position
+                        # Side-specific PnL calculation
+                        side_to_trade = row.get('side_to_trade', 'BOTH')
+                        
+                        # Only calculate PnL for the side we're actually trading
+                        should_calculate_pnl = (
+                            side_to_trade == 'BOTH' or
+                            (side_to_trade == 'YES' and detail['name'] == 'token1') or
+                            (side_to_trade == 'NO' and detail['name'] == 'token2')
+                        )
+                        
+                        if should_calculate_pnl and avgPrice > 0:
+                            pnl = (mid_price - avgPrice) / avgPrice * 100
+                        else:
+                            pnl = 0
+                            if avgPrice == 0:
+                                print(f"Skipping PnL calculation - no position yet (avgPrice=0)")
+                            elif not should_calculate_pnl:
+                                print(f"Skipping PnL calculation - not trading this side (side_to_trade={side_to_trade}, token={detail['name']})")
 
-                        # Sell at market best bid to ensure execution
-                        order['size'] = pos_to_sell
-                        order['price'] = n_deets['best_bid']
+                        print(f"Mid Price: {mid_price}, Spread: {spread}, PnL: {pnl}")
+                        
+                        # Prepare risk details for tracking
+                        risk_details = {
+                            'time': str(pd.Timestamp.utcnow().tz_localize(None)),
+                            'question': row['question']
+                        }
 
-                        # Set period to avoid trading after stop-loss
-                        risk_details['sleep_till'] = str(pd.Timestamp.utcnow().tz_localize(None) + 
-                                                        pd.Timedelta(hours=params['sleep_period']))
+                        try:
+                            ratio = (n_deets['bid_sum_within_n_percent']) / (n_deets['ask_sum_within_n_percent'])
+                        except:
+                            ratio = 0
 
-                        print("Risking off")
-                        send_sell_order(order)
-                        client.cancel_all_market(market)
+                        pos_to_sell = sell_amount  # Amount to sell in risk-off scenario
 
-                        # Save risk details to file
-                        open(fname, 'w').write(json.dumps(risk_details))
-                        continue
+                        # ------- STOP-LOSS LOGIC -------
+                        # Trigger stop-loss if either:
+                        # 1. PnL is below threshold and spread is tight enough to exit
+                        # 2. Volatility is too high
+                        # Only check stop-loss if we have a position (avgPrice > 0)
+                        if avgPrice > 0 and ((pnl < params['stop_loss_threshold'] and spread <= params['spread_threshold']) or row['3_hour'] > params['volatility_threshold']):
+                            risk_details['msg'] = (f"Selling {pos_to_sell} because spread is {spread} and pnl is {pnl} "
+                                                  f"and ratio is {ratio} and 3 hour volatility is {row['3_hour']}")
+                            print("Stop loss Triggered: ", risk_details['msg'])
+
+                            # Sell at market best bid to ensure execution
+                            order['size'] = pos_to_sell
+                            order['price'] = n_deets['best_bid']
+
+                            # Set period to avoid trading after stop-loss
+                            risk_details['sleep_till'] = str(pd.Timestamp.utcnow().tz_localize(None) + 
+                                                            pd.Timedelta(hours=params['sleep_period']))
+
+                            print("Risking off")
+                            send_sell_order(order)
+                            client.cancel_all_market(market)
+
+                            # Save risk details to file
+                            open(fname, 'w').write(json.dumps(risk_details))
+                            continue
 
                 # ------- BUY ORDER LOGIC -------
+                # Check if buy orders are allowed by trading mode
+                if not allow_buy:
+                    print(f"⏸️  Skipping buy order - {trading_mode} mode does not allow buying at this time")
+                    continue  # Skip to next token
+                
                 # Get max_size, defaulting to trade_size if not specified
                 max_size = row.get('max_size', row['trade_size'])
                 
                 # Only buy if:
-                # 1. Position is less than max_size (new logic)
-                # 2. Position is less than absolute cap (250)
-                # 3. Buy amount is above minimum size
+                # 1. Trading mode allows buying
+                # 2. Position is less than max_size (new logic)
+                # 3. Position is less than absolute cap (250)
+                # 4. Buy amount is above minimum size
+                # 5. We have enough USDC (balance check - prevents using more than we have)
+                cost_usdc = buy_amount  # Order size is in USDC
+                available_after_reserved = available_usdc - reserved_usdc
+                if cost_usdc > available_after_reserved:
+                    if available_after_reserved >= row['min_size']:
+                        buy_amount = round_down(available_after_reserved, 2)
+                        cost_usdc = buy_amount
+                        print(f"📉 Capping buy to available USDC: ${buy_amount:.2f} (had ${available_after_reserved:.2f})")
+                    else:
+                        print(f"⏸️  Insufficient USDC: need ${cost_usdc:.2f}, available ${available_after_reserved:.2f}. Skipping buy.")
+                        continue
+                
                 if position < max_size and position < 250 and buy_amount > 0 and buy_amount >= row['min_size']:
                     # Get reference price from market data
                     sheet_value = row['best_bid']
@@ -594,14 +731,17 @@ async def perform_trade(market):
                                 if best_bid > orders['buy']['price']:
                                     print(f"Sending Buy Order for {token} because better price. "
                                           f"Orders look like this: {orders['buy']}. Best Bid: {best_bid}")
+                                    reserved_usdc += order['size']
                                     send_buy_order(order)
                                 # 2. Current position + orders is not enough to reach max_size
                                 elif position + orders['buy']['size'] < 0.95 * max_size:
                                     print(f"Sending Buy Order for {token} because not enough position + size")
+                                    reserved_usdc += order['size']
                                     send_buy_order(order)
                                 # 3. Our current order is too large and needs to be resized
                                 elif orders['buy']['size'] > order['size'] * 1.01:
                                     print(f"Resending buy orders because open orders are too large")
+                                    reserved_usdc += order['size']
                                     send_buy_order(order)
                                 # Commented out logic for cancelling orders when market conditions change
                                 # elif best_bid_size < orders['buy']['size'] * 0.98 and abs(best_bid - second_best_bid) > 0.03:

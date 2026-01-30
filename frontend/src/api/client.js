@@ -4,7 +4,7 @@ const API_BASE_URL = process.env.VUE_APP_API_URL || 'http://localhost:8000/api'
 
 const client = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
+  timeout: 45000,  // Increased to 45s for slow API calls (balance fetching from blockchain)
   headers: {
     'Content-Type': 'application/json'
   }

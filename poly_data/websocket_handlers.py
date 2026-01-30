@@ -24,7 +24,13 @@ async def connect_market_websocket(chunk):
     """
     from poly_data.api_constants import WSS_MARKET_ENDPOINT
     uri = WSS_MARKET_ENDPOINT
-    async with websockets.connect(uri, ping_interval=5, ping_timeout=None) as websocket:
+    async with websockets.connect(
+        uri, 
+        ping_interval=5, 
+        ping_timeout=None,
+        open_timeout=60,  # Increase connection timeout to 60 seconds
+        close_timeout=10
+    ) as websocket:
         # Prepare and send subscription message
         # According to docs: Market channel subscription format: {"assets_ids": [...], "type": "market"}
         message = {
@@ -36,6 +42,15 @@ async def connect_market_websocket(chunk):
         print("\n")
         print(f"✅ Sent market subscription message for {len(chunk)} tokens: {chunk[:3]}..." if len(chunk) > 3 else f"✅ Sent market subscription message for {len(chunk)} tokens: {chunk}")
         print(f"📡 Waiting for market data updates...")
+        
+        # Wait for subscription confirmation
+        try:
+            first_response = await asyncio.wait_for(websocket.recv(), timeout=10)
+            print(f"📬 First WebSocket response: {first_response[:200]}")
+        except asyncio.TimeoutError:
+            print(f"⚠️  No response from Polymarket within 10 seconds!")
+        except Exception as e:
+            print(f"⚠️  Error receiving first response: {e}")
 
         # Start ping task according to docs: send PING every 5 seconds
         async def ping_task():
@@ -51,8 +66,14 @@ async def connect_market_websocket(chunk):
 
         try:
             # Process incoming market data indefinitely
+            message_count = 0
             while True:
                 message = await websocket.recv()
+                message_count += 1
+                
+                # Debug log every 10 messages
+                if message_count % 10 == 0:
+                    print(f"📨 Received {message_count} messages so far...")
                 
                 # Handle PONG/PING responses (non-JSON messages)
                 # PONG mesajları "PONG", "PONG...", b"PONG" gibi farklı formatlarda gelebilir
@@ -116,7 +137,13 @@ async def connect_user_websocket():
     from poly_data.api_constants import WSS_USER_ENDPOINT
     uri = WSS_USER_ENDPOINT
 
-    async with websockets.connect(uri, ping_interval=5, ping_timeout=None) as websocket:
+    async with websockets.connect(
+        uri, 
+        ping_interval=5, 
+        ping_timeout=None,
+        open_timeout=60,  # Increase connection timeout to 60 seconds
+        close_timeout=10
+    ) as websocket:
         # Validate API credentials before sending
         if not hasattr(global_state, 'client') or not global_state.client:
             print("❌ Error: Client not initialized. Cannot connect to user websocket.")
