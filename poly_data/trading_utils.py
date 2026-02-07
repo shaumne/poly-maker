@@ -351,15 +351,11 @@ def get_buy_sell_amount(position, bid_price, row, other_token_position=0):
             remaining_to_max = max_size - position
             buy_amount = min(trade_size, remaining_to_max)
             
-            # MARKET MAKING FIX: Always quote sell side, even with no position
-            # This provides liquidity on both sides of the market
-            if position >= trade_size:
-                # We have position - sell from inventory
+            # SELL size must never exceed position (shares). API rejects "not enough balance" otherwise.
+            if position > 0:
                 sell_amount = min(position, trade_size)
             else:
-                # No position yet - still quote sell side for market making
-                # This allows us to profit from spread immediately
-                sell_amount = trade_size
+                sell_amount = 0  # No position - cannot sell
         else:
             # We've reached max_size, implement progressive exit strategy
             # Always offer to sell trade_size amount when at max_size

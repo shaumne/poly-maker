@@ -371,7 +371,11 @@ class PolymarketClient:
                         print(f"   Error code: {error_msg}")
                     if order_id:
                         print(f"   Order ID: {order_id}")
-                    
+                    try:
+                        from poly_data.trade_logger import trade_log_only_file
+                        trade_log_only_file("API_ORDER_FAILED", "Order placement failed", token=str(marketId)[:24], action=action, price=price, size=size, error_msg=error_msg[:150], order_id=order_id)
+                    except Exception:
+                        pass
                     # Check for account restriction errors
                     if 'closed only mode' in error_msg.lower() or 'closed-only' in error_msg.lower():
                         # Set global flag to prevent further order attempts
@@ -459,7 +463,11 @@ class PolymarketClient:
                 print(f"   Status: {status} - {status_description}")
                 if order_hashes:
                     print(f"   Order hashes: {order_hashes}")
-                
+                try:
+                    from poly_data.trade_logger import trade_log_only_file
+                    trade_log_only_file("API_ORDER_PLACED", f"Order {action} placed", token=str(marketId)[:24], action=action, price=price, size=size, order_id=order_id, status=status)
+                except Exception:
+                    pass
                 return {
                     "success": True,
                     "orderId": order_id,
@@ -554,11 +562,55 @@ class PolymarketClient:
                     print("   📚 For more help, see: https://docs.polymarket.com/developers/clob-api/your-first-order")
                 elif 'not enough balance' in error_msg.lower() or 'allowance' in error_msg.lower():
                     logger.warning("Insufficient balance or allowance")
-                    print("   💡 Tip: Ensure you have sufficient USDC balance and allowances set")
+                    # SELL: Önce API cache güncelle, sonra gerekirse proxy üzerinden on-chain approval yap
+                    if action and str(action).upper() == 'SELL' and signed_order is not None:
+                        try:
+                            _rate_limiter = get_rate_limiter()
+                            _rate_limiter.wait_if_needed_sync('clob_balance_allowance_update')
+                            self.client.update_balance_allowance(
+                                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=str(marketId))
+                            )
+                            _rate_limiter.record_request('clob_balance_allowance_update')
+                            logger.info("Called update_balance_allowance for SELL token; retrying post_order once")
+                            print("   🔄 Updating allowance cache and retrying sell once...")
+                            resp_retry = self.client.post_order(signed_order, OrderType.GTC)
+                            _rate_limiter.record_request('clob_post_order')
+                            if isinstance(resp_retry, dict) and resp_retry.get('success', False):
+                                logger.info("Sell succeeded after update_balance_allowance retry")
+                                print("   ✅ Sell succeeded after allowance update.")
+                                return resp_retry
+                        except Exception as retry_ex:
+                            logger.debug(f"Retry after update_balance_allowance failed: {retry_ex}")
+                        # On-chain: Proxy (Safe) üzerinden CTF setApprovalForAll; sonra tekrar sat (oturumda en fazla bir kez dene)
+                        if not getattr(self, '_proxy_approval_tried', False):
+                            try:
+                                self._proxy_approval_tried = True
+                                from poly_data.proxy_approval import ensure_ctf_allowance_via_proxy
+                                pk = os.getenv("PK")
+                                if pk and getattr(self, 'browser_wallet', None):
+                                    print("   🔧 Running on-chain CTF approval via proxy (no manual step needed)...")
+                                    if ensure_ctf_allowance_via_proxy(self.browser_wallet, pk):
+                                        _rate_limiter = get_rate_limiter()
+                                        _rate_limiter.wait_if_needed_sync('clob_post_order')
+                                        resp_retry = self.client.post_order(signed_order, OrderType.GTC)
+                                        _rate_limiter.record_request('clob_post_order')
+                                        if isinstance(resp_retry, dict) and resp_retry.get('success', False):
+                                            logger.info("Sell succeeded after proxy CTF approval")
+                                            print("   ✅ Sell succeeded after proxy approval.")
+                                            return resp_retry
+                            except Exception as proxy_ex:
+                                logger.debug("Proxy CTF approval or retry failed: %s", proxy_ex)
+                        print("   💡 SELL failed: Check USDC/outcome balance and that BROWSER_ADDRESS is your Polymarket proxy.")
+                    else:
+                        print("   💡 Tip: Ensure you have sufficient USDC balance and allowances set")
                 elif '400' in error_msg or 'bad request' in error_msg.lower():
                     logger.warning("Bad request - check order parameters")
                     print("   💡 Tip: Check order parameters (price, size, token_id) are valid")
-                
+                try:
+                    from poly_data.trade_logger import trade_log_only_file
+                    trade_log_only_file("API_ORDER_EXCEPTION", "Order failed (exception)", token=str(marketId)[:24], action=action, error=error_message[:150])
+                except Exception:
+                    pass
                 return {"success": False, "error": error_message, "error_type": error_type}
             else:
                 # Generic exception

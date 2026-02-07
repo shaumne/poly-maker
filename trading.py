@@ -9,6 +9,7 @@ import time                     # Time tracking for throttling
 
 import poly_data.global_state as global_state
 import poly_data.CONSTANTS as CONSTANTS
+from poly_data.trade_logger import trade_log_only_file
 
 # Track last order time for throttling (per token)
 last_order_time = {}
@@ -57,6 +58,7 @@ def send_buy_order(order):
         if time_since_last_order < min_order_interval:
             cooldown_remaining = min_order_interval - time_since_last_order
             print(f"⏱️  Throttling: {cooldown_remaining:.1f}s cooldown remaining for this token")
+            trade_log_only_file("THROTTLE", "BUY throttled", token=token, cooldown=round(cooldown_remaining, 1))
             return
     
     client = global_state.client
@@ -77,11 +79,12 @@ def send_buy_order(order):
     
     if should_cancel and (existing_buy_size > 0 or order['orders']['sell']['size'] > 0):
         print(f"Cancelling buy orders - price diff: {price_diff:.4f}, size diff: {size_diff:.1f}")
-        
+        trade_log_only_file("CANCEL", "Cancel buy orders", token=token, price_diff=round(price_diff, 4), size_diff=round(size_diff, 2))
         # cancel_all_asset method now handles DRY_RUN internally
         client.cancel_all_asset(order['token'])
     elif not should_cancel:
         print(f"Keeping existing buy orders - minor changes: price diff: {price_diff:.4f}, size diff: {size_diff:.1f}")
+        trade_log_only_file("SKIP", "Keep existing buy order", token=token)
         return  # Don't place new order if existing one is fine
 
     # Calculate minimum acceptable price based on market spread
@@ -104,16 +107,18 @@ def send_buy_order(order):
             usdc = client.get_usdc_balance()
             if usdc < order['size']:
                 print(f"⏸️  Skipping buy - insufficient USDC: have ${usdc:.2f}, need ${order['size']:.2f}")
+                trade_log_only_file("SKIP", "Buy skipped: insufficient USDC", token=token, usdc=round(usdc, 2), need=order['size'])
                 return
         except Exception as e:
             print(f"⚠️  Balance check failed: {e}. Proceeding with order (risk of API reject).")
+            trade_log_only_file("WARN", "Balance check failed, proceeding", token=token, error=str(e))
         
         # Only place orders with prices between 0.01 and 0.99 to avoid extreme positions
         # (0.01-0.99 range allows trading on both sides of prediction markets)
         if order['price'] >= 0.01 and order['price'] <= 0.99:
             print(f'Creating new order for {order["size"]} at {order["price"]}')
             print(order['token'], 'BUY', order['price'], order['size'])
-            
+            trade_log_only_file("BUY_ORDER", "Creating BUY order", token=token, price=order['price'], size=order['size'])
             # create_order method now handles DRY_RUN internally and market validation
             # neg_risk will be automatically determined from market data if None
             # Pass None to let create_order() auto-detect from market
@@ -124,18 +129,22 @@ def send_buy_order(order):
                 order['size'], 
                 neg_risk=None  # Auto-detect from market
             )
-            
             # Update last order time for throttling
             last_order_time[token] = time.time()
-            
             # Check if order creation failed due to validation
             if result.get('validation_error'):
                 print(f"⚠️  Order validation failed: {result.get('error', 'Unknown error')}")
+                trade_log_only_file("ORDER_FAILED", "BUY validation failed", token=token, error=result.get('error', ''))
                 return
+            status = result.get('status', '') if isinstance(result, dict) else ''
+            success = result.get('success', False) if isinstance(result, dict) else False
+            trade_log_only_file("BUY_RESULT", "BUY order result", token=token, success=success, status=status, order_id=result.get('orderId', '') if isinstance(result, dict) else '')
         else:
             print(f"Not creating buy order because price {order['price']:.3f} is outside acceptable range (0.01-0.99)")
+            trade_log_only_file("SKIP", "Buy price out of range", token=token, price=order['price'])
     else:
         print(f'Not creating new order because order price of {order["price"]} is less than incentive start price of {incentive_start}. Mid price is {order["mid_price"]}')
+        trade_log_only_file("SKIP", "Buy below incentive start", token=token, price=order['price'], mid_price=order.get('mid_price'))
 
 
 def send_sell_order(order):
@@ -160,6 +169,7 @@ def send_sell_order(order):
         if time_since_last_order < min_order_interval:
             cooldown_remaining = min_order_interval - time_since_last_order
             print(f"⏱️  Throttling: {cooldown_remaining:.1f}s cooldown remaining for this token")
+            trade_log_only_file("THROTTLE", "SELL throttled", token=token, cooldown=round(cooldown_remaining, 1))
             return
     
     client = global_state.client
@@ -180,13 +190,16 @@ def send_sell_order(order):
     
     if should_cancel and (existing_sell_size > 0 or order['orders']['buy']['size'] > 0):
         print(f"Cancelling sell orders - price diff: {price_diff:.4f}, size diff: {size_diff:.1f}")
+        trade_log_only_file("CANCEL", "Cancel sell orders", token=token, price_diff=round(price_diff, 4), size_diff=round(size_diff, 2))
         # cancel_all_asset method now handles DRY_RUN internally
         client.cancel_all_asset(order['token'])
     elif not should_cancel:
         print(f"Keeping existing sell orders - minor changes: price diff: {price_diff:.4f}, size diff: {size_diff:.1f}")
+        trade_log_only_file("SKIP", "Keep existing sell order", token=token)
         return  # Don't place new order if existing one is fine
 
     print(f'Creating new order for {order["size"]} at {order["price"]}')
+    trade_log_only_file("SELL_ORDER", "Creating SELL order", token=token, price=order['price'], size=order['size'])
     
     # create_order method now handles DRY_RUN internally and market validation
     # neg_risk will be automatically determined from market data if None
@@ -205,7 +218,11 @@ def send_sell_order(order):
     # Check if order creation failed due to validation
     if result.get('validation_error'):
         print(f"⚠️  Order validation failed: {result.get('error', 'Unknown error')}")
+        trade_log_only_file("ORDER_FAILED", "SELL validation failed", token=token, error=result.get('error', ''))
         return
+    status = result.get('status', '') if isinstance(result, dict) else ''
+    success = result.get('success', False) if isinstance(result, dict) else False
+    trade_log_only_file("SELL_RESULT", "SELL order result", token=token, success=success, status=status, order_id=result.get('orderId', '') if isinstance(result, dict) else '')
 
 # Dictionary to store locks for each market to prevent concurrent trading on the same market
 market_locks = {}
@@ -286,7 +303,8 @@ async def perform_trade(market):
             else:
                 print(f"⚠️  Cannot proceed: dataframe is empty")
                 return
-            print(f"🔍 Processing trade for market: {row['question']} (ID: {market})")      
+            print(f"🔍 Processing trade for market: {row['question']} (ID: {market})")
+            trade_log_only_file("PROCESS_MARKET", "Processing market", market=market[:42], question=row.get('question', '')[:80])      
             # Determine decimal precision from tick size
             round_length = len(str(row['tick_size']).split(".")[1])
 
@@ -344,6 +362,7 @@ async def perform_trade(market):
                 available_usdc = max(0.0, float(usdc_balance))
                 reserved_usdc = 0.0  # Reserve as we plan buys in this loop
                 print(f"💰 USDC balance: ${available_usdc:.2f}")
+                trade_log_only_file("USDC_BALANCE", "USDC balance", market=market[:42], balance=round(available_usdc, 2))
             except Exception as e:
                 print(f"⚠️  Could not fetch USDC balance: {e}. Skipping buy orders this round.")
                 available_usdc = 0.0
@@ -546,6 +565,7 @@ async def perform_trade(market):
                 if sell_amount > 0:
                     if not allow_sell:
                         print(f"⏸️  Skipping sell order - {trading_mode} mode does not allow selling at this time")
+                        trade_log_only_file("SKIP_SELL", "Mode does not allow sell", market=market[:42], token=token, mode=trading_mode)
                         # Continue to buy logic (don't skip the entire iteration)
                     else:
                         # MARKET MAKING FIX: Place sell orders even with avgPrice=0
@@ -595,20 +615,53 @@ async def perform_trade(market):
                         except:
                             ratio = 0
 
-                        pos_to_sell = sell_amount  # Amount to sell in risk-off scenario
+                        pos_to_sell = sell_amount  # Amount to sell (shares); must not exceed position
+                        pos_to_sell = min(pos_to_sell, position)  # Cap at actual position to avoid "not enough balance"
+                        best_bid_val = n_deets.get('best_bid')
+                        take_profit_pct = params.get('take_profit_threshold', 2.0)
+
+                        # ------- TAKE-PROFIT: Küçük de olsa karı sürekli kilitle -------
+                        # best_bid makul ise: %1+ kar da olsa best_bid >= maliyet ise sat; eşik üstünde daha agresif
+                        if avgPrice > 0 and best_bid_val is not None and pos_to_sell > 0:
+                            best_bid_val = round(float(best_bid_val), round_length)
+                            if best_bid_val < 0.01 or best_bid_val > 0.99:
+                                pass  # Skip invalid best_bid
+                            elif pnl >= max(take_profit_pct * 5, 15.0):
+                                order['price'] = best_bid_val
+                                order['size'] = pos_to_sell
+                                print(f"💰 HIGH PROFIT {pnl:.1f}% - Selling at best_bid {best_bid_val} to lock in")
+                                trade_log_only_file("TAKE_PROFIT", "HIGH PROFIT sell", market=market[:42], token=token, pnl=round(pnl, 2), price=best_bid_val, size=pos_to_sell)
+                                send_sell_order(order)
+                                continue
+                            elif pnl >= take_profit_pct and best_bid_val >= avgPrice:
+                                order['price'] = best_bid_val
+                                order['size'] = pos_to_sell
+                                print(f"💰 Take profit {pnl:.1f}% - Selling at best_bid {best_bid_val}")
+                                trade_log_only_file("TAKE_PROFIT", "Take profit sell", market=market[:42], token=token, pnl=round(pnl, 2), price=best_bid_val, size=pos_to_sell)
+                                send_sell_order(order)
+                                continue
+                            # Küçük kar: %1+ kar ve best_bid >= maliyet ise de sat (sürekli küçük kar topla)
+                            elif pnl >= 1.0 and best_bid_val >= avgPrice:
+                                order['price'] = best_bid_val
+                                order['size'] = pos_to_sell
+                                print(f"💰 Small profit {pnl:.1f}% - Selling at best_bid {best_bid_val}")
+                                trade_log_only_file("TAKE_PROFIT", "Small profit sell", market=market[:42], token=token, pnl=round(pnl, 2), price=best_bid_val, size=pos_to_sell)
+                                send_sell_order(order)
+                                continue
 
                         # ------- STOP-LOSS LOGIC -------
-                        # Trigger stop-loss if either:
-                        # 1. PnL is below threshold and spread is tight enough to exit
-                        # 2. Volatility is too high
-                        # Only check stop-loss if we have a position (avgPrice > 0)
-                        if avgPrice > 0 and ((pnl < params['stop_loss_threshold'] and spread <= params['spread_threshold']) or row['3_hour'] > params['volatility_threshold']):
+                        # Trigger stop-loss when PnL is below threshold (do NOT wait for tight spread -
+                        # in a crash spread widens and we would hold to -60%+). Use max spread 0.30
+                        # so we still exit when there is some liquidity; volatility can also trigger.
+                        MAX_SPREAD_FOR_STOP_LOSS = 0.30
+                        if avgPrice > 0 and ((pnl < params['stop_loss_threshold'] and spread <= MAX_SPREAD_FOR_STOP_LOSS) or (row.get('3_hour') or 0) > params['volatility_threshold']):
                             risk_details['msg'] = (f"Selling {pos_to_sell} because spread is {spread} and pnl is {pnl} "
-                                                  f"and ratio is {ratio} and 3 hour volatility is {row['3_hour']}")
+                                                  f"and ratio is {ratio} and 3 hour volatility is {row.get('3_hour', 0)}")
                             print("Stop loss Triggered: ", risk_details['msg'])
+                            trade_log_only_file("STOP_LOSS", "Stop loss triggered", market=market[:42], token=token, pnl=round(pnl, 2), size=min(pos_to_sell, position), msg=risk_details['msg'][:120])
 
-                            # Sell at market best bid to ensure execution
-                            order['size'] = pos_to_sell
+                            # Sell at market best bid; size must not exceed position (shares)
+                            order['size'] = min(pos_to_sell, position)
                             order['price'] = n_deets['best_bid']
 
                             # Set period to avoid trading after stop-loss
@@ -617,6 +670,7 @@ async def perform_trade(market):
 
                             print("Risking off")
                             send_sell_order(order)
+                            trade_log_only_file("CANCEL_MARKET", "Cancel all orders for market (risk-off)", market=market[:42])
                             client.cancel_all_market(market)
 
                             # Save risk details to file
@@ -627,6 +681,7 @@ async def perform_trade(market):
                 # Check if buy orders are allowed by trading mode
                 if not allow_buy:
                     print(f"⏸️  Skipping buy order - {trading_mode} mode does not allow buying at this time")
+                    trade_log_only_file("SKIP_BUY", "Mode does not allow buy", market=market[:42], token=token, mode=trading_mode)
                     continue  # Skip to next token
                 
                 # Get max_size, defaulting to trade_size if not specified
@@ -647,6 +702,7 @@ async def perform_trade(market):
                         print(f"📉 Capping buy to available USDC: ${buy_amount:.2f} (had ${available_after_reserved:.2f})")
                     else:
                         print(f"⏸️  Insufficient USDC: need ${cost_usdc:.2f}, available ${available_after_reserved:.2f}. Skipping buy.")
+                        trade_log_only_file("SKIP_BUY", "Insufficient USDC", market=market[:42], token=token, need=round(cost_usdc, 2), available=round(available_after_reserved, 2))
                         continue
                 
                 if position < max_size and position < 250 and buy_amount > 0 and buy_amount >= row['min_size']:
@@ -689,6 +745,7 @@ async def perform_trade(market):
                             send_buy = False
                             print(f"Not sending a buy order because recently risked off. "
                                  f"Risked off at {risk_details['time']}")
+                            trade_log_only_file("SKIP_BUY", "Risk-off period", market=market[:42], token=token, risked_off_at=risk_details.get('time', ''))
 
                     # Only proceed if we're not in risk-off period
                     if send_buy:
@@ -705,6 +762,7 @@ async def perform_trade(market):
                             if price_check:
                                 reason.append(f'price of {order["price"]} is outside 0.05 of {sheet_value}')
                             print(f'Cancelling all orders: {" and ".join(reason)}')
+                            trade_log_only_file("CANCEL", "Cancel all (volatility/price)", market=market[:42], token=token, reason="; ".join(reason)[:100])
                             client.cancel_all_asset(order['token'])
                         else:
                             # Check for reverse position (holding opposite outcome)
@@ -714,6 +772,7 @@ async def perform_trade(market):
                             # If we have significant opposing position, don't buy more
                             if rev_pos['size'] > row['min_size']:
                                 print("Bypassing creation of new buy order because there is a reverse position")
+                                trade_log_only_file("SKIP_BUY", "Reverse position", market=market[:42], token=token, rev_pos=rev_pos['size'])
                                 if orders['buy']['size'] > CONSTANTS.MIN_MERGE_SIZE:
                                     print("Cancelling buy orders because there is a reverse position")
                                     client.cancel_all_asset(order['token'])
@@ -724,6 +783,7 @@ async def perform_trade(market):
                             if overall_ratio < 0:
                                 send_buy = False
                                 print(f"Not sending a buy order because overall ratio is {overall_ratio}")
+                                trade_log_only_file("SKIP_BUY", "Overall ratio negative", market=market[:42], token=token, ratio=overall_ratio)
                                 client.cancel_all_asset(order['token'])
                             else:
                                 # Place new buy order if any of these conditions are met:
@@ -731,16 +791,19 @@ async def perform_trade(market):
                                 if best_bid > orders['buy']['price']:
                                     print(f"Sending Buy Order for {token} because better price. "
                                           f"Orders look like this: {orders['buy']}. Best Bid: {best_bid}")
+                                    trade_log_only_file("BUY_REASON", "Better price", market=market[:42], token=token, best_bid=best_bid)
                                     reserved_usdc += order['size']
                                     send_buy_order(order)
                                 # 2. Current position + orders is not enough to reach max_size
                                 elif position + orders['buy']['size'] < 0.95 * max_size:
                                     print(f"Sending Buy Order for {token} because not enough position + size")
+                                    trade_log_only_file("BUY_REASON", "Not enough position+size", market=market[:42], token=token)
                                     reserved_usdc += order['size']
                                     send_buy_order(order)
                                 # 3. Our current order is too large and needs to be resized
                                 elif orders['buy']['size'] > order['size'] * 1.01:
                                     print(f"Resending buy orders because open orders are too large")
+                                    trade_log_only_file("BUY_REASON", "Resize open orders", market=market[:42], token=token)
                                     reserved_usdc += order['size']
                                     send_buy_order(order)
                                 # Commented out logic for cancelling orders when market conditions change
@@ -767,11 +830,13 @@ async def perform_trade(market):
                     if diff > 2:
                         print(f"Sending Sell Order for {token} because better current order price of "
                               f"{order_price} is deviant from the tp_price of {tp_price} and diff is {diff}")
+                        trade_log_only_file("SELL_UPDATE", "Sell order price update (diff>2%)", market=market[:42], token=token, diff=round(diff, 2))
                         send_sell_order(order)
                     # 2. Current order size is too small for our position
                     elif orders['sell']['size'] < position * 0.97:
                         print(f"Sending Sell Order for {token} because not enough sell size. "
                               f"Position: {position}, Sell Size: {orders['sell']['size']}")
+                        trade_log_only_file("SELL_UPDATE", "Sell order size update", market=market[:42], token=token, position=position)
                         send_sell_order(order)
                     
                     # Commented out additional conditions for updating sell orders
@@ -784,6 +849,7 @@ async def perform_trade(market):
 
         except Exception as ex:
             print(f"Error performing trade for {market}: {ex}")
+            trade_log_only_file("ERROR", "perform_trade exception", market=market[:42], error=str(ex)[:200])
             traceback.print_exc()
 
         # Clean up memory and introduce a small delay

@@ -85,7 +85,7 @@ class TradingParamsBase(BaseModel):
     max_spread: float = 5.0
     tick_size: float = 0.01
     multiplier: float = 1.0
-    stop_loss_threshold: float = -5.0
+    stop_loss_threshold: float = -10.0  # cut losses early (e.g. -10%)
     take_profit_threshold: float = 2.0
     volatility_threshold: float = 50.0
     spread_threshold: float = 0.05

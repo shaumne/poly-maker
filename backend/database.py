@@ -69,7 +69,7 @@ class TradingParams(Base):
     multiplier = Column(Float, default=1.0)
     
     # Risk management
-    stop_loss_threshold = Column(Float, default=-5.0)  # percentage
+    stop_loss_threshold = Column(Float, default=-10.0)  # percentage; cut losses early (was -5)
     take_profit_threshold = Column(Float, default=2.0)  # percentage
     volatility_threshold = Column(Float, default=50.0)
     spread_threshold = Column(Float, default=0.05)
